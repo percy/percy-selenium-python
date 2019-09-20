@@ -1,2 +1,2 @@
-selenium~=3.0.0
-requests~=2.0.0
+selenium==3.*
+requests==2.*

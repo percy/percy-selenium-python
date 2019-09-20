@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name='percy-python-selenium',
-    version='0.1.1',
+    version='0.1.2',
     description='Python client for visual regression testing with Percy (https://percy.io).',
     author='Perceptual Inc.',
     author_email='team@percy.io',
@@ -15,8 +15,8 @@ setuptools.setup(
     ],
     include_package_data=True,
     install_requires=[
-        'selenium~=3.0.0',
-        'requests~=2.0.0'
+        'selenium==3.*',
+        'requests==2.*'
     ],
     license='MIT',
     zip_safe=False,
