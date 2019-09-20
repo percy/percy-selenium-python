@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name='percy-python-selenium',
-    version='0.1.0',
+    version='0.1.1',
     description='Python client for visual regression testing with Percy (https://percy.io).',
     author='Perceptual Inc.',
     author_email='team@percy.io',

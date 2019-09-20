@@ -4,7 +4,7 @@ import requests
 from selenium import webdriver
 
 AGENT_URL = 'http://localhost:5338'
-VERSION = 'v0.1.0'
+VERSION = 'v0.1.1'
 
 percyIsRunning = True
 
