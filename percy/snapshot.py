@@ -32,7 +32,7 @@ def postSnapshot(postData):
         if isDebug():
             print(e)
 
-        print('[percy] failed to POST snapshot to percy-agent')
+        print('[percy] failed to POST snapshot to percy-agent:' + postData.get('name'))
         return
 
 def clientInfo():

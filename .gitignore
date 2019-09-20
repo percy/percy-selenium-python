@@ -1,3 +1,6 @@
 node_modules
 geckodriver.log
 *.pyc
+dist
+build
+*.egg-info
