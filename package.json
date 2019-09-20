@@ -1,0 +1,10 @@
+{
+  "name": "percy-python-selenium",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "private": true,
+  "dependencies": {
+    "@percy/agent": "~0"
+  }
+}
