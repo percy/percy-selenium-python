@@ -3,9 +3,6 @@ import setuptools
 with open("README.md", "r") as fh:
     long_description = fh.read()
 
-with open("requirements.txt", "r") as fh:
-    requirements = fh.read()
-
 setuptools.setup(
     name='percy-python-selenium',
     version='0.1.0',
@@ -17,7 +14,10 @@ setuptools.setup(
         'percy',
     ],
     include_package_data=True,
-    install_requires=requirements,
+    install_requires=[
+        'selenium~=3.0.0',
+        'requests~=2.0.0'
+    ],
     license='MIT',
     zip_safe=False,
     keywords='percy',
