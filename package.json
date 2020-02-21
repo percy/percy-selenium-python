@@ -10,5 +10,8 @@
   "scripts": {
     "prebuild": "rm -rf dist/ build/",
     "build": "python setup.py sdist bdist_wheel"
+  },
+  "devDependencies": {
+    "chromedriver": "^80.0.1"
   }
 }
