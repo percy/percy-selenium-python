@@ -2,15 +2,16 @@ from selenium import webdriver
 from percy import percySnapshot
 
 def runTests(browser):
+    browserName = browser.capabilities.get('browserName')
     browser.get('https://sdk-test.percy.dev')
     browser.implicitly_wait(10)
     browser.find_element_by_class_name("note")
 
-    percySnapshot(browser=browser, name='Snapshots HTTPS, CSP, HSTS sites')
+    percySnapshot(browser=browser, name=browserName + ' Snapshots HTTPS, CSP, HSTS sites')
 
     percySnapshot(
         browser=browser,
-        name='With options', widths=[666],
+        name=browserName + ' With options', widths=[666],
         minHeight=1500,
         percyCSS=".note { background-color: purple; }"
     )
@@ -19,7 +20,7 @@ def runTests(browser):
     browser.implicitly_wait(10)
     browser.find_element_by_class_name("note")
 
-    percySnapshot(browser=browser, name='Snapshots redirected assets')
+    percySnapshot(browser=browser, name=browserName + ' Snapshots redirected assets')
 
     browser.quit()
 
