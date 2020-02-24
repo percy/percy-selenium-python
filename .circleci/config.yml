@@ -4,7 +4,8 @@ default_test_steps: &default_test_steps
     - checkout
     - run: yarn
     - run: pip install -r ./requirements.txt --user
-    - run: yarn percy exec -- python ./tests.py
+    - run: sudo python setup.py develop
+    - run: yarn percy exec -- python ./tests/tests.py
 
 jobs:
   test_python_2:
