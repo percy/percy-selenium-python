@@ -4,14 +4,15 @@
   "main": "index.js",
   "license": "MIT",
   "private": true,
-  "dependencies": {
-    "@percy/agent": "~0"
+  "peerDependencies": {
+    "@percy/cli": "^1"
   },
   "scripts": {
     "prebuild": "rm -rf dist/ build/",
     "build": "python setup.py sdist bdist_wheel"
   },
   "devDependencies": {
-    "chromedriver": "^80.0.1"
+    "@percy/cli": "^1.0.0-beta.8",
+    "chromedriver": "^84.0.0"
   }
 }

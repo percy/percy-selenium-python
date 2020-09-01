@@ -3,36 +3,39 @@ import requests
 
 from selenium import webdriver
 
-AGENT_URL = 'http://localhost:5338'
-VERSION = 'v0.1.2'
+CLI_PORT = os.environ.get('PERCY_CLI_PORT')
+
+CLI_URL = 'http://localhost' + CLI_PORT or '5338'
+print CLI_URL
+VERSION = 'v1.0.0'
 
 percyIsRunning = True
 
 # Fetches the JS that serializes the DOM
-def getAgentJS():
+def getDOMJS():
     global percyIsRunning
 
     try:
-        agentJS = requests.get(AGENT_URL + '/percy-agent.js')
-        return agentJS.text
+        domJS = requests.get(CLI_URL + '/dom.js')
+        return domJS.text
     except requests.exceptions.RequestException as e:
         if isDebug():
             print(e)
         if percyIsRunning == True:
             percyIsRunning = False
-        print('[percy] failed to fetch percy-agent.js, disabling Percy')
+        print('[percy] failed to fetch dom.js, disabling Percy')
         return percyIsRunning
 
 
 # POSTs the serialized DOM to the percy-agent server for asset discovery
 def postSnapshot(postData):
     try:
-        requests.post(AGENT_URL + '/percy/snapshot', json=postData)
+        requests.post(CLI_URL + '/percy/snapshot', json=postData)
     except requests.exceptions.RequestException as e:
         if isDebug():
             print(e)
 
-        print('[percy] failed to POST snapshot to percy-agent:' + postData.get('name'))
+        print('[percy] failed to POST snapshot to the Percy CLI:' + postData.get('name'))
         return
 
 def clientInfo():
@@ -51,14 +54,18 @@ def percySnapshot(browser, name, **kwargs):
     if percyIsRunning == False:
         return
 
-    agentJS = getAgentJS()
+    domJS = getDOMJS()
 
     # Exit if we fail to grab the JS that serializes the DOM
-    if agentJS == False:
+    if domJS == False:
         return
 
-    browser.execute_script(agentJS)
-    domSnapshot = browser.execute_script('var agent = new PercyAgent({ handleAgentCommunication: false }); return agent.snapshot("name")')
+    browser.execute_script(domJS)
+    domSnapshot = browser.execute_script('PercyDOM.serialize(arguments[0])', {
+        'enableJavaScript': kwargs.get('enableJavaScript') or False,
+        'domTransformation': kwargs.get('domTransformation') or '',
+    })
+
     postData = {
         'name': name,
         'url': browser.current_url,
