@@ -39,7 +39,7 @@ def clientInfo():
     return 'percy-selenium-python/' + VERSION
 
 def envInfo(capabilities):
-    return 'python-selenium: ' + webdriver.__version__ + '; ' + capabilities.get('browserName') + ': ' + capabilities.get('browserVersion')
+    return 'python-selenium: ' + webdriver.__version__
 
 def isDebug():
     return os.environ.get('LOG_LEVEL') == 'debug'
