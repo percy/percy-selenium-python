@@ -38,7 +38,7 @@ def postSnapshot(postData):
 def clientInfo():
     return 'percy-selenium-python/' + VERSION
 
-def envInfo(capabilities):
+def envInfo():
     return 'python-selenium: ' + webdriver.__version__
 
 def isDebug():
@@ -68,7 +68,7 @@ def percySnapshot(browser, name, **kwargs):
         'enableJavaScript': kwargs.get('enableJavaScript') or False,
         'domSnapshot': domSnapshot,
         'clientInfo': clientInfo(),
-        'environmentInfo': envInfo(browser.capabilities)
+        'environmentInfo': envInfo()
     }
 
     postSnapshot(postData)
