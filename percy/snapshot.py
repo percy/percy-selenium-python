@@ -1,74 +1,62 @@
 import os
+import platform
 import requests
 
-from selenium import webdriver
+from selenium.webdriver import __version__ as SELENIUM_VERSION
+from percy.version import __version__ as SDK_VERSION
 
-AGENT_URL = 'http://localhost:5338'
-VERSION = 'v0.1.2'
+# for logging
+LABEL = '[\u001b[35mpercy\u001b[39m] '
 
-percyIsRunning = True
+# Collect client and environment information
+CLIENT_INFO = 'percy-selenium-python/' + SDK_VERSION
+ENV_INFO = ['selenium/' + SELENIUM_VERSION, 'python/' + platform.python_version()]
 
-# Fetches the JS that serializes the DOM
-def getAgentJS():
-    global percyIsRunning
+# Maybe get the CLI API address from the environment
+PERCY_CLI_API = os.environ.get('PERCY_CLI_API') or 'http://localhost:5338/percy'
+PERCY_LOGLEVEL = os.environ.get('PERCY_LOGLEVEL') or 'info'
+
+# Cache @percy/dom script to avoid extraneous requests
+PERCY_DOM_SCRIPT = None
+
+# Check if Percy is enabled while caching the @percy/dom script
+def isPercyEnabled():
+    global PERCY_DOM_SCRIPT
+
+    if PERCY_DOM_SCRIPT is None:
+        try:
+            r = requests.get(PERCY_CLI_API + '/dom.js')
+            r.raise_for_status()
+            PERCY_DOM_SCRIPT = r.text
+        except Exception as e:
+            if PERCY_LOGLEVEL == 'debug': print(e)
+            PERCY_DOM_SCRIPT = ''
+
+        if not PERCY_DOM_SCRIPT:
+            print(LABEL + 'Percy is not running, disabling snapshots')
+
+    return bool(PERCY_DOM_SCRIPT)
+
+# Take a DOM snapshot and post it to the snapshot endpoint
+def percySnapshot(driver, name, **kwargs):
+    if not isPercyEnabled(): return
 
     try:
-        agentJS = requests.get(AGENT_URL + '/percy-agent.js')
-        return agentJS.text
-    except requests.exceptions.RequestException as e:
-        if isDebug():
-            print(e)
-        if percyIsRunning == True:
-            percyIsRunning = False
-        print('[percy] failed to fetch percy-agent.js, disabling Percy')
-        return percyIsRunning
+        # Inject the DOM serialization script
+        driver.execute_script(PERCY_DOM_SCRIPT)
 
+        # Post the DOM to the snapshot endpoint with snapshot options and other info
+        r = requests.post(PERCY_CLI_API + '/snapshot', json=dict(**kwargs, **{
+            'domSnapshot': driver.execute_script('return PercyDOM.serialize()'),
+            'clientInfo': CLIENT_INFO,
+            'environmentInfo': ENV_INFO,
+            'url': driver.current_url,
+            'name': name
+        })).json()
 
-# POSTs the serialized DOM to the percy-agent server for asset discovery
-def postSnapshot(postData):
-    try:
-        requests.post(AGENT_URL + '/percy/snapshot', json=postData)
-    except requests.exceptions.RequestException as e:
-        if isDebug():
-            print(e)
-
-        print('[percy] failed to POST snapshot to percy-agent:' + postData.get('name'))
+        # Handle errors
+        if not r['success']: raise Exception(r['error'])
+    except Exception as e:
+        print(LABEL + 'Could not take DOM snapshot "' + name + '"')
+        if PERCY_LOGLEVEL == 'debug': print(e)
         return
-
-def clientInfo():
-    return 'percy-selenium-python/' + VERSION
-
-def envInfo():
-    return 'python-selenium: ' + webdriver.__version__
-
-def isDebug():
-    return os.environ.get('LOG_LEVEL') == 'debug'
-
-def percySnapshot(browser, name, **kwargs):
-    global percyIsRunning
-
-    # Exit if we have failed to connect to the percy-agent server
-    if percyIsRunning == False:
-        return
-
-    agentJS = getAgentJS()
-
-    # Exit if we fail to grab the JS that serializes the DOM
-    if agentJS == False:
-        return
-
-    browser.execute_script(agentJS)
-    domSnapshot = browser.execute_script('var agent = new PercyAgent({ handleAgentCommunication: false }); return agent.snapshot("name")')
-    postData = {
-        'name': name,
-        'url': browser.current_url,
-        'widths': kwargs.get('widths') or [],
-        'percyCSS': kwargs.get('percyCSS') or '',
-        'minHeight': kwargs.get('minHeight') or '',
-        'enableJavaScript': kwargs.get('enableJavaScript') or False,
-        'domSnapshot': domSnapshot,
-        'clientInfo': clientInfo(),
-        'environmentInfo': envInfo()
-    }
-
-    postSnapshot(postData)

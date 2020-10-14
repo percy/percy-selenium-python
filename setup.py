@@ -1,42 +1,33 @@
-import setuptools
+from setuptools import setup
+import percy
 
-with open("README.md", "r") as fh:
-    long_description = fh.read()
-
-setuptools.setup(
-    name='percy-python-selenium',
-    version='0.1.3',
-    description='Python client for visual regression testing with Percy (https://percy.io).',
+setup(
+    name='percy-selenium',
+    description='Python client for visual testing with Percy',
+    version=percy.__version__,
+    license='MIT',
     author='Perceptual Inc.',
     author_email='team@percy.io',
-    url='https://github.com/percy/percy-python-selenium',
-    packages=[
-        'percy',
-    ],
+    url='https://github.com/percy/percy-selenium-python',
+    keywords='selenium percy visual testing',
+    packages=['percy'],
     include_package_data=True,
     install_requires=[
         'selenium==3.*',
         'requests==2.*'
     ],
-    license='MIT',
-    zip_safe=False,
-    keywords='percy',
+    python_requires='>=3.6',
     classifiers=[
-        'Development Status :: 2 - Pre-Alpha',
+        'Development Status :: 5 - Production/Stable',
         'Intended Audience :: Developers',
         'License :: OSI Approved :: MIT License',
         'Natural Language :: English',
-        'Programming Language :: Python :: 2',
-        'Programming Language :: Python :: 2.7',
-        'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.3',
-        'Programming Language :: Python :: 3.4',
-        'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',
     ],
     test_suite='tests',
-    tests_require=['selenium']
+    tests_require=['selenium', 'httpretty'],
+    zip_safe=False
 )
