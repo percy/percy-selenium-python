@@ -8,10 +8,6 @@ default_test_steps: &default_test_steps
     - run: yarn percy exec -- python ./tests/tests.py
 
 jobs:
-  test_python_2:
-    docker:
-      - image: circleci/python:2-node-browsers
-    <<: *default_test_steps
   test_python_3:
     docker:
       - image: circleci/python:3-node-browsers
@@ -21,5 +17,4 @@ workflows:
   version: 2.1
   test:
     jobs:
-      - test_python_2
       - test_python_3
