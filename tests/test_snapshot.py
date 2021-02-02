@@ -29,12 +29,14 @@ mock_server_thread.start()
 
 # mock helpers
 def mock_healthcheck(fail=False):
-    # rather than a healthcheck, this SDK tries to fetch @percy/dom
+    httpretty.register_uri(
+        httpretty.GET, 'http://localhost:5338/percy/healthcheck',
+        body=('{ "success": ' + ('true' if not fail else 'false, "error": "test"') + '}'),
+        status=(500 if fail else 200))
     httpretty.register_uri(
         httpretty.GET, 'http://localhost:5338/percy/dom.js',
-        # mock serialization script for testing purposes
         body='window.PercyDOM = { serialize: () => document.documentElement.outerHTML };',
-        status=(500 if fail else 200))
+        status=200)
 
 def mock_snapshot(fail=False):
     httpretty.register_uri(
@@ -55,7 +57,8 @@ class TestPercySnapshot(unittest.TestCase):
 
     def setUp(self):
         # clear the cached value for testing
-        local.PERCY_DOM_SCRIPT = None
+        local.isPercyEnabled.cache_clear()
+        local.fetchPercyDOM.cache_clear()
         self.driver.get('http://localhost:8000')
         httpretty.enable()
 
@@ -78,9 +81,9 @@ class TestPercySnapshot(unittest.TestCase):
             percySnapshot(self.driver, 'Snapshot 1')
             percySnapshot(self.driver, 'Snapshot 2')
 
-            mock_print.assert_called_with(LABEL + 'Percy is not running, disabling snapshots')
+            mock_print.assert_called_with(f'{LABEL} Percy is not running, disabling snapshots')
 
-        self.assertEqual(httpretty.last_request().path, '/percy/dom.js')
+        self.assertEqual(httpretty.last_request().path, '/percy/healthcheck')
 
     def test_disables_snapshots_when_the_healthcheck_errors(self):
         # no mocks will cause the request to throw an error
@@ -89,7 +92,7 @@ class TestPercySnapshot(unittest.TestCase):
             percySnapshot(self.driver, 'Snapshot 1')
             percySnapshot(self.driver, 'Snapshot 2')
 
-            mock_print.assert_called_with(LABEL + 'Percy is not running, disabling snapshots')
+            mock_print.assert_called_with(f'{LABEL} Percy is not running, disabling snapshots')
 
         self.assertEqual(len(httpretty.latest_requests()), 0)
 
@@ -102,7 +105,7 @@ class TestPercySnapshot(unittest.TestCase):
 
         self.assertEqual(httpretty.last_request().path, '/percy/snapshot')
 
-        s1 = httpretty.latest_requests()[1].parsed_body
+        s1 = httpretty.latest_requests()[2].parsed_body
         self.assertEqual(s1['name'], 'Snapshot 1')
         self.assertEqual(s1['url'], 'http://localhost:8000/')
         self.assertEqual(s1['domSnapshot'], '<html><head></head><body>Snapshot Me</body></html>')
@@ -110,7 +113,7 @@ class TestPercySnapshot(unittest.TestCase):
         self.assertRegex(s1['environmentInfo'][0], r'selenium/\d+')
         self.assertRegex(s1['environmentInfo'][1], r'python/\d+')
 
-        s2 = httpretty.latest_requests()[2].parsed_body
+        s2 = httpretty.latest_requests()[3].parsed_body
         self.assertEqual(s2['name'], 'Snapshot 2')
         self.assertEqual(s2['enableJavaScript'], True)
 
@@ -122,7 +125,7 @@ class TestPercySnapshot(unittest.TestCase):
         with patch('builtins.print') as mock_print:
             percySnapshot(self.driver, 'Snapshot 1')
 
-            mock_print.assert_called_with(LABEL + 'Could not take DOM snapshot "Snapshot 1"')
+            mock_print.assert_any_call(f'{LABEL} Could not take DOM snapshot "Snapshot 1"')
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,41 +1,44 @@
 import os
 import platform
+import functools
+import json
 import requests
 
 from selenium.webdriver import __version__ as SELENIUM_VERSION
 from percy.version import __version__ as SDK_VERSION
-
-# for logging
-LABEL = '[\u001b[35mpercy\u001b[39m] '
 
 # Collect client and environment information
 CLIENT_INFO = 'percy-selenium-python/' + SDK_VERSION
 ENV_INFO = ['selenium/' + SELENIUM_VERSION, 'python/' + platform.python_version()]
 
 # Maybe get the CLI API address from the environment
-PERCY_CLI_API = os.environ.get('PERCY_CLI_API') or 'http://localhost:5338/percy'
-PERCY_LOGLEVEL = os.environ.get('PERCY_LOGLEVEL') or 'info'
+PERCY_CLI_API = os.environ.get('PERCY_CLI_API') or 'http://localhost:5338'
+PERCY_DEBUG = os.environ.get('PERCY_LOGLEVEL') == 'debug'
 
-# Cache @percy/dom script to avoid extraneous requests
-PERCY_DOM_SCRIPT = None
+# for logging
+LABEL = '[\u001b[35m' + ('percy:python' if PERCY_DEBUG else 'percy') + '\u001b[39m]'
 
-# Check if Percy is enabled while caching the @percy/dom script
+# Check if Percy is enabled, caching the result so it is only checked once
+@functools.cache
 def isPercyEnabled():
-    global PERCY_DOM_SCRIPT
+    try:
+        response = requests.get(f'{PERCY_CLI_API}/percy/healthcheck')
+        response.raise_for_status()
+        data = response.json()
 
-    if PERCY_DOM_SCRIPT is None:
-        try:
-            r = requests.get(PERCY_CLI_API + '/dom.js')
-            r.raise_for_status()
-            PERCY_DOM_SCRIPT = r.text
-        except Exception as e:
-            if PERCY_LOGLEVEL == 'debug': print(e)
-            PERCY_DOM_SCRIPT = ''
+        if not data['success']: raise Exception(data['error'])
+        return True
+    except Exception as e:
+        print(f'{LABEL} Percy is not running, disabling snapshots')
+        if PERCY_DEBUG: print(f'{LABEL} {e}')
+        return False
 
-        if not PERCY_DOM_SCRIPT:
-            print(LABEL + 'Percy is not running, disabling snapshots')
-
-    return bool(PERCY_DOM_SCRIPT)
+# Fetch the @percy/dom script, caching the result so it is only fetched once
+@functools.cache
+def fetchPercyDOM():
+    response = requests.get(f'{PERCY_CLI_API}/percy/dom.js')
+    response.raise_for_status()
+    return response.text
 
 # Take a DOM snapshot and post it to the snapshot endpoint
 def percySnapshot(driver, name, **kwargs):
@@ -43,20 +46,25 @@ def percySnapshot(driver, name, **kwargs):
 
     try:
         # Inject the DOM serialization script
-        driver.execute_script(PERCY_DOM_SCRIPT)
+        driver.execute_script(fetchPercyDOM())
+
+        # Serialize and capture the DOM
+        domSnapshot = driver.execute_script(f'return PercyDOM.serialize({json.dumps(kwargs)})')
 
         # Post the DOM to the snapshot endpoint with snapshot options and other info
-        r = requests.post(PERCY_CLI_API + '/snapshot', json=dict(**kwargs, **{
-            'domSnapshot': driver.execute_script('return PercyDOM.serialize()'),
+        response = requests.post(f'{PERCY_CLI_API}/percy/snapshot', json=dict(**kwargs, **{
+            'domSnapshot': domSnapshot,
             'clientInfo': CLIENT_INFO,
             'environmentInfo': ENV_INFO,
             'url': driver.current_url,
             'name': name
-        })).json()
+        }))
 
         # Handle errors
-        if not r['success']: raise Exception(r['error'])
+        response.raise_for_status()
+        data = response.json()
+
+        if not data['success']: raise Exception(data['error'])
     except Exception as e:
-        print(LABEL + 'Could not take DOM snapshot "' + name + '"')
-        if PERCY_LOGLEVEL == 'debug': print(e)
-        return
+        print(f'{LABEL} Could not take DOM snapshot "{name}"')
+        print(f'{LABEL} {e}')
