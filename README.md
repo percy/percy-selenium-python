@@ -1,40 +1,34 @@
-# percy-python-selenium
+# percy-selenium-python
 ![Test](https://github.com/percy/percy-python-selenium/workflows/Test/badge.svg)
 
 [Percy](https://percy.io) visual testing for Python Selenium.
 
 ## Installation
 
-Using yarn:
+npm install `@percy/cli`:
 
 ```sh-session
 $ yarn add --dev @percy/cli
 ```
 
-Using npm:
-
-```sh-session
-$ npm install --save-dev @percy/cli
-```
-
-Percy pip package:
+pip install Percy selenium package:
 
 ```ssh-session
-$ pip install percy-python-selenium
+$ pip install percy-selenium
 ```
 
 ## Usage
 
-This is an example test using the `percySnapshot` function.
+This is an example test using the `percy_snapshot` function.
 
 ``` python
-from percy import percySnapshot
+from percy import percy_snapshot
 
 browser = webdriver.Firefox()
 browser.get('http://example.com')
 ​
 # take a snapshot
-percySnapshot(browser=browser, name='Python example')
+percy_snapshot(browser=browser, name='Python example')
 ```
 
 Running the test above normally will result in the following log:
@@ -60,7 +54,7 @@ $ percy exec -- [python test command]
 
 ## Configuration
 
-`percySnapshot(driver, name[, **kwargs])`
+`percy_snapshot(driver, name[, **kwargs])`
 
 - `driver` (**required**) - A selenium-webdriver driver instance
 - `name` (**required**) - The snapshot name; must be unique to each snapshot
