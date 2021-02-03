@@ -1,7 +1,4 @@
-# -*- coding: utf-8 -*-
-
-__author__ = 'Perceptual Inc.'
-__email__ = 'team@percy.io'
-__version__ = '0.1.3'
-
-from percy.snapshot import percySnapshot
+from percy.snapshot import percy_snapshot
+from percy.version import __version__
+# for better backwards compatibility
+percySnapshot = percy_snapshot

@@ -1,0 +1,13 @@
+[MASTER]
+fail-under=10.0
+disable=
+  broad-except,
+  global-statement,
+  invalid-name,
+  missing-class-docstring,
+  missing-function-docstring,
+  missing-module-docstring,
+  multiple-statements,
+  no-member,
+  no-value-for-parameter,
+  redefined-builtin,

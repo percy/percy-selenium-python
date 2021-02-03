@@ -1,0 +1,17 @@
+name: Lint
+on: push
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-python@v2
+        with:
+          python-version: 3.x
+      - uses: actions/cache@v2
+        with:
+          path: ~/.cache/pip
+          key: v1/${{ runner.os }}/pip/${{ hashFiles('{requirements,development}.txt') }}
+          restore-keys: v1/${{ runner.os }}/pip/
+      - run: make lint

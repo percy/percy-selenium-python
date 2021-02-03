@@ -1,74 +1,70 @@
 import os
+import platform
+import functools
+import json
 import requests
 
-from selenium import webdriver
+from selenium.webdriver import __version__ as SELENIUM_VERSION
+from percy.version import __version__ as SDK_VERSION
 
-AGENT_URL = 'http://localhost:5338'
-VERSION = 'v0.1.2'
+# Collect client and environment information
+CLIENT_INFO = 'percy-selenium-python/' + SDK_VERSION
+ENV_INFO = ['selenium/' + SELENIUM_VERSION, 'python/' + platform.python_version()]
 
-percyIsRunning = True
+# Maybe get the CLI API address from the environment
+PERCY_CLI_API = os.environ.get('PERCY_CLI_API') or 'http://localhost:5338'
+PERCY_DEBUG = os.environ.get('PERCY_LOGLEVEL') == 'debug'
 
-# Fetches the JS that serializes the DOM
-def getAgentJS():
-    global percyIsRunning
+# for logging
+LABEL = '[\u001b[35m' + ('percy:python' if PERCY_DEBUG else 'percy') + '\u001b[39m]'
+
+# Check if Percy is enabled, caching the result so it is only checked once
+@functools.cache
+def is_percy_enabled():
+    try:
+        response = requests.get(f'{PERCY_CLI_API}/percy/healthcheck')
+        response.raise_for_status()
+        data = response.json()
+
+        if not data['success']: raise Exception(data['error'])
+        return True
+    except Exception as e:
+        print(f'{LABEL} Percy is not running, disabling snapshots')
+        if PERCY_DEBUG: print(f'{LABEL} {e}')
+        return False
+
+# Fetch the @percy/dom script, caching the result so it is only fetched once
+@functools.cache
+def fetch_percy_dom():
+    response = requests.get(f'{PERCY_CLI_API}/percy/dom.js')
+    response.raise_for_status()
+    return response.text
+
+# Take a DOM snapshot and post it to the snapshot endpoint
+def percy_snapshot(driver, name, **kwargs):
+    if not is_percy_enabled(): return
 
     try:
-        agentJS = requests.get(AGENT_URL + '/percy-agent.js')
-        return agentJS.text
-    except requests.exceptions.RequestException as e:
-        if isDebug():
-            print(e)
-        if percyIsRunning == True:
-            percyIsRunning = False
-        print('[percy] failed to fetch percy-agent.js, disabling Percy')
-        return percyIsRunning
+        # Inject the DOM serialization script
+        driver.execute_script(fetch_percy_dom())
 
+        # Serialize and capture the DOM
+        dom_snapshot = driver.execute_script(f'return PercyDOM.serialize({json.dumps(kwargs)})')
 
-# POSTs the serialized DOM to the percy-agent server for asset discovery
-def postSnapshot(postData):
-    try:
-        requests.post(AGENT_URL + '/percy/snapshot', json=postData)
-    except requests.exceptions.RequestException as e:
-        if isDebug():
-            print(e)
+        # Post the DOM to the snapshot endpoint with snapshot options and other info
+        response = requests.post(f'{PERCY_CLI_API}/percy/snapshot', json=dict(**kwargs, **{
+            'domSnapshot': dom_snapshot,
+            'clientInfo': CLIENT_INFO,
+            'environmentInfo': ENV_INFO,
+            'url': driver.current_url,
+            'name': name
+        }))
 
-        print('[percy] failed to POST snapshot to percy-agent:' + postData.get('name'))
-        return
+        # Handle errors
+        response.raise_for_status()
+        data = response.json()
 
-def clientInfo():
-    return 'percy-selenium-python/' + VERSION
-
-def envInfo():
-    return 'python-selenium: ' + webdriver.__version__
-
-def isDebug():
-    return os.environ.get('LOG_LEVEL') == 'debug'
-
-def percySnapshot(browser, name, **kwargs):
-    global percyIsRunning
-
-    # Exit if we have failed to connect to the percy-agent server
-    if percyIsRunning == False:
-        return
-
-    agentJS = getAgentJS()
-
-    # Exit if we fail to grab the JS that serializes the DOM
-    if agentJS == False:
-        return
-
-    browser.execute_script(agentJS)
-    domSnapshot = browser.execute_script('var agent = new PercyAgent({ handleAgentCommunication: false }); return agent.snapshot("name")')
-    postData = {
-        'name': name,
-        'url': browser.current_url,
-        'widths': kwargs.get('widths') or [],
-        'percyCSS': kwargs.get('percyCSS') or '',
-        'minHeight': kwargs.get('minHeight') or '',
-        'enableJavaScript': kwargs.get('enableJavaScript') or False,
-        'domSnapshot': domSnapshot,
-        'clientInfo': clientInfo(),
-        'environmentInfo': envInfo()
-    }
-
-    postSnapshot(postData)
+        if not data['success']: raise Exception(data['error'])
+    except Exception as e:
+        print(f'{LABEL} Could not take DOM snapshot "{name}"')
+        print(f'{LABEL} {e}')

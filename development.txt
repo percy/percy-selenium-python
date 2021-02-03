@@ -1,0 +1,3 @@
+httpretty==1.*
+pylint==2.*
+twine

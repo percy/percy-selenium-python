@@ -1,6 +1,6 @@
-node_modules
-geckodriver.log
-*.pyc
+.venv
+*.egg-info
 dist
 build
-*.egg-info
+*.log
+**/__pycache__
