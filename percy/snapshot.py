@@ -20,7 +20,7 @@ LABEL = '[\u001b[35m' + ('percy:python' if PERCY_DEBUG else 'percy') + '\u001b[3
 
 # Check if Percy is enabled, caching the result so it is only checked once
 @functools.cache
-def isPercyEnabled():
+def is_percy_enabled():
     try:
         response = requests.get(f'{PERCY_CLI_API}/percy/healthcheck')
         response.raise_for_status()
@@ -35,25 +35,25 @@ def isPercyEnabled():
 
 # Fetch the @percy/dom script, caching the result so it is only fetched once
 @functools.cache
-def fetchPercyDOM():
+def fetch_percy_dom():
     response = requests.get(f'{PERCY_CLI_API}/percy/dom.js')
     response.raise_for_status()
     return response.text
 
 # Take a DOM snapshot and post it to the snapshot endpoint
-def percySnapshot(driver, name, **kwargs):
-    if not isPercyEnabled(): return
+def percy_snapshot(driver, name, **kwargs):
+    if not is_percy_enabled(): return
 
     try:
         # Inject the DOM serialization script
-        driver.execute_script(fetchPercyDOM())
+        driver.execute_script(fetch_percy_dom())
 
         # Serialize and capture the DOM
-        domSnapshot = driver.execute_script(f'return PercyDOM.serialize({json.dumps(kwargs)})')
+        dom_snapshot = driver.execute_script(f'return PercyDOM.serialize({json.dumps(kwargs)})')
 
         # Post the DOM to the snapshot endpoint with snapshot options and other info
         response = requests.post(f'{PERCY_CLI_API}/percy/snapshot', json=dict(**kwargs, **{
-            'domSnapshot': domSnapshot,
+            'domSnapshot': dom_snapshot,
             'clientInfo': CLIENT_INFO,
             'environmentInfo': ENV_INFO,
             'url': driver.current_url,

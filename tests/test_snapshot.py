@@ -7,7 +7,7 @@ import httpretty
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options as FirefoxOptions
 
-from percy import percySnapshot
+from percy import percy_snapshot
 import percy.snapshot as local
 LABEL = local.LABEL
 
@@ -57,8 +57,8 @@ class TestPercySnapshot(unittest.TestCase):
 
     def setUp(self):
         # clear the cached value for testing
-        local.isPercyEnabled.cache_clear()
-        local.fetchPercyDOM.cache_clear()
+        local.is_percy_enabled.cache_clear()
+        local.fetch_percy_dom.cache_clear()
         self.driver.get('http://localhost:8000')
         httpretty.enable()
 
@@ -68,18 +68,18 @@ class TestPercySnapshot(unittest.TestCase):
 
     def test_throws_error_when_a_driver_is_not_provided(self):
         with self.assertRaises(Exception):
-            percySnapshot()
+            percy_snapshot()
 
     def test_throws_error_when_a_name_is_not_provided(self):
         with self.assertRaises(Exception):
-            percySnapshot(self.driver)
+            percy_snapshot(self.driver)
 
     def test_disables_snapshots_when_the_healthcheck_fails(self):
         mock_healthcheck(fail=True)
 
         with patch('builtins.print') as mock_print:
-            percySnapshot(self.driver, 'Snapshot 1')
-            percySnapshot(self.driver, 'Snapshot 2')
+            percy_snapshot(self.driver, 'Snapshot 1')
+            percy_snapshot(self.driver, 'Snapshot 2')
 
             mock_print.assert_called_with(f'{LABEL} Percy is not running, disabling snapshots')
 
@@ -89,8 +89,8 @@ class TestPercySnapshot(unittest.TestCase):
         # no mocks will cause the request to throw an error
 
         with patch('builtins.print') as mock_print:
-            percySnapshot(self.driver, 'Snapshot 1')
-            percySnapshot(self.driver, 'Snapshot 2')
+            percy_snapshot(self.driver, 'Snapshot 1')
+            percy_snapshot(self.driver, 'Snapshot 2')
 
             mock_print.assert_called_with(f'{LABEL} Percy is not running, disabling snapshots')
 
@@ -100,8 +100,8 @@ class TestPercySnapshot(unittest.TestCase):
         mock_healthcheck()
         mock_snapshot()
 
-        percySnapshot(self.driver, 'Snapshot 1')
-        percySnapshot(self.driver, 'Snapshot 2', enableJavaScript=True)
+        percy_snapshot(self.driver, 'Snapshot 1')
+        percy_snapshot(self.driver, 'Snapshot 2', enableJavaScript=True)
 
         self.assertEqual(httpretty.last_request().path, '/percy/snapshot')
 
@@ -123,7 +123,7 @@ class TestPercySnapshot(unittest.TestCase):
         mock_snapshot(fail=True)
 
         with patch('builtins.print') as mock_print:
-            percySnapshot(self.driver, 'Snapshot 1')
+            percy_snapshot(self.driver, 'Snapshot 1')
 
             mock_print.assert_any_call(f'{LABEL} Could not take DOM snapshot "Snapshot 1"')
 
