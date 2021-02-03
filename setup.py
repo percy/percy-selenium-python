@@ -1,9 +1,17 @@
 from setuptools import setup
+from os import path
 import percy
+
+# read the README for long_description
+cwd = path.abspath(path.dirname(__file__))
+with open(path.join(cwd, 'README.md'), encoding='utf-8') as f:
+    long_description = f.read()
 
 setup(
     name='percy-selenium',
     description='Python client for visual testing with Percy',
+    long_description=long_description,
+    long_description_content_type='text/markdown',
     version=percy.__version__,
     license='MIT',
     author='Perceptual Inc.',
