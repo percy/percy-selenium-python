@@ -28,7 +28,7 @@ browser = webdriver.Firefox()
 browser.get('http://example.com')
 ​
 # take a snapshot
-percy_snapshot(browser=browser, name='Python example')
+percy_snapshot(browser, 'Python example')
 ```
 
 Running the test above normally will result in the following log:
@@ -60,10 +60,10 @@ $ percy exec -- [python test command]
 - `name` (**required**) - The snapshot name; must be unique to each snapshot
 - Additional snapshot options (overrides any project options) (`**kwargs**`):
   - `widths` - An array of widths to take screenshots at
-  - `minHeight` - The minimum viewport height to take screenshots at
-  - `percyCSS` - Percy specific CSS only applied in Percy's rendering environment
-  - `requestHeaders` - Headers that should be used during asset discovery
-  - `enableJavaScript` - Enable JavaScript in Percy's rendering environment
+  - `min_height` - The minimum viewport height to take screenshots at
+  - `percy_css` - Percy specific CSS only applied in Percy's rendering environment
+  - `request_headers` - Headers that should be used during asset discovery
+  - `enable_javascript` - Enable JavaScript in Percy's rendering environment
 
 ### Migrating Config
 
