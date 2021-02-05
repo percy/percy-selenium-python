@@ -53,9 +53,9 @@ def percy_snapshot(driver, name, **kwargs):
 
         # Post the DOM to the snapshot endpoint with snapshot options and other info
         response = requests.post(f'{PERCY_CLI_API}/percy/snapshot', json=dict(**kwargs, **{
-            'domSnapshot': dom_snapshot,
-            'clientInfo': CLIENT_INFO,
-            'environmentInfo': ENV_INFO,
+            'client_info': CLIENT_INFO,
+            'environment_info': ENV_INFO,
+            'dom_snapshot': dom_snapshot,
             'url': driver.current_url,
             'name': name
         }))

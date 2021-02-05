@@ -4,8 +4,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 
 import httpretty
-from selenium import webdriver
-from selenium.webdriver.firefox.options import Options as FirefoxOptions
+from selenium.webdriver import Firefox, FirefoxOptions
 
 from percy import percy_snapshot
 import percy.snapshot as local
@@ -48,8 +47,8 @@ class TestPercySnapshot(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         options = FirefoxOptions()
-        options.add_argument('--headless')
-        cls.driver = webdriver.Firefox(options=options)
+        options.add_argument('-headless')
+        cls.driver = Firefox(options=options)
 
     @classmethod
     def tearDownClass(cls):
@@ -101,21 +100,21 @@ class TestPercySnapshot(unittest.TestCase):
         mock_snapshot()
 
         percy_snapshot(self.driver, 'Snapshot 1')
-        percy_snapshot(self.driver, 'Snapshot 2', enableJavaScript=True)
+        percy_snapshot(self.driver, 'Snapshot 2', enable_javascript=True)
 
         self.assertEqual(httpretty.last_request().path, '/percy/snapshot')
 
         s1 = httpretty.latest_requests()[2].parsed_body
         self.assertEqual(s1['name'], 'Snapshot 1')
         self.assertEqual(s1['url'], 'http://localhost:8000/')
-        self.assertEqual(s1['domSnapshot'], '<html><head></head><body>Snapshot Me</body></html>')
-        self.assertRegex(s1['clientInfo'], r'percy-selenium-python/\d+')
-        self.assertRegex(s1['environmentInfo'][0], r'selenium/\d+')
-        self.assertRegex(s1['environmentInfo'][1], r'python/\d+')
+        self.assertEqual(s1['dom_snapshot'], '<html><head></head><body>Snapshot Me</body></html>')
+        self.assertRegex(s1['client_info'], r'percy-selenium-python/\d+')
+        self.assertRegex(s1['environment_info'][0], r'selenium/\d+')
+        self.assertRegex(s1['environment_info'][1], r'python/\d+')
 
         s2 = httpretty.latest_requests()[3].parsed_body
         self.assertEqual(s2['name'], 'Snapshot 2')
-        self.assertEqual(s2['enableJavaScript'], True)
+        self.assertEqual(s2['enable_javascript'], True)
 
 
     def test_handles_snapshot_errors(self):
