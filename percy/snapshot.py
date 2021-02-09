@@ -1,7 +1,7 @@
 import os
 import platform
-import functools
 import json
+from functools import lru_cache
 import requests
 
 from selenium.webdriver import __version__ as SELENIUM_VERSION
@@ -19,7 +19,7 @@ PERCY_DEBUG = os.environ.get('PERCY_LOGLEVEL') == 'debug'
 LABEL = '[\u001b[35m' + ('percy:python' if PERCY_DEBUG else 'percy') + '\u001b[39m]'
 
 # Check if Percy is enabled, caching the result so it is only checked once
-@functools.cache
+@lru_cache(maxsize=None)
 def is_percy_enabled():
     try:
         response = requests.get(f'{PERCY_CLI_API}/percy/healthcheck')
@@ -34,7 +34,7 @@ def is_percy_enabled():
         return False
 
 # Fetch the @percy/dom script, caching the result so it is only fetched once
-@functools.cache
+@lru_cache(maxsize=None)
 def fetch_percy_dom():
     response = requests.get(f'{PERCY_CLI_API}/percy/dom.js')
     response.raise_for_status()
