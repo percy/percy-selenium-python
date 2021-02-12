@@ -6,7 +6,7 @@ from threading import Thread
 import httpretty
 from selenium.webdriver import Firefox, FirefoxOptions
 
-from percy import percy_snapshot
+from percy import percy_snapshot, percySnapshot
 import percy.snapshot as local
 LABEL = local.LABEL
 
@@ -116,6 +116,18 @@ class TestPercySnapshot(unittest.TestCase):
         self.assertEqual(s2['name'], 'Snapshot 2')
         self.assertEqual(s2['enable_javascript'], True)
 
+    def test_has_a_backwards_compatible_function(self):
+        mock_healthcheck()
+        mock_snapshot()
+
+        percySnapshot(browser=self.driver, name='Snapshot')
+
+        self.assertEqual(httpretty.last_request().path, '/percy/snapshot')
+
+        s1 = httpretty.latest_requests()[2].parsed_body
+        self.assertEqual(s1['name'], 'Snapshot')
+        self.assertEqual(s1['url'], 'http://localhost:8000/')
+        self.assertEqual(s1['dom_snapshot'], '<html><head></head><body>Snapshot Me</body></html>')
 
     def test_handles_snapshot_errors(self):
         mock_healthcheck()
