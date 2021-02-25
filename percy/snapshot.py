@@ -27,6 +27,19 @@ def is_percy_enabled():
         data = response.json()
 
         if not data['success']: raise Exception(data['error'])
+        version = response.headers.get('x-percy-core-version')
+
+        if not version:
+            print(f'{LABEL} You may be using @percy/agent '
+                  'which is no longer supported by this SDK. '
+                  'Please uninstall @percy/agent and install @percy/cli instead. '
+                  'https://docs.percy.io/docs/migrating-to-percy-cli')
+            return False
+
+        if version.split('.')[0] != '1':
+            print(f'{LABEL} Unsupported Percy CLI version, {version}')
+            return False
+
         return True
     except Exception as e:
         print(f'{LABEL} Percy is not running, disabling snapshots')
