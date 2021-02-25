@@ -27,11 +27,24 @@ mock_server_thread.setDaemon(True)
 mock_server_thread.start()
 
 # mock helpers
-def mock_healthcheck(fail=False):
+def mock_healthcheck(fail=False, fail_how='error'):
+    health_body = '{ "success": true }'
+    health_headers = { 'X-Percy-Core-Version': '1.0.0' }
+    health_status = 200
+
+    if fail and fail_how == 'error':
+        health_body = '{ "success": false, "error": "test" }'
+        health_status = 500
+    elif fail and fail_how == 'wrong-version':
+        health_headers = { 'X-Percy-Core-Version': '2.0.0' }
+    elif fail and fail_how == 'no-version':
+        health_headers = {}
+
     httpretty.register_uri(
         httpretty.GET, 'http://localhost:5338/percy/healthcheck',
-        body=('{ "success": ' + ('true' if not fail else 'false, "error": "test"') + '}'),
-        status=(500 if fail else 200))
+        body=health_body,
+        adding_headers=health_headers,
+        status=health_status)
     httpretty.register_uri(
         httpretty.GET, 'http://localhost:5338/percy/dom.js',
         body='window.PercyDOM = { serialize: () => document.documentElement.outerHTML };',
@@ -94,6 +107,31 @@ class TestPercySnapshot(unittest.TestCase):
             mock_print.assert_called_with(f'{LABEL} Percy is not running, disabling snapshots')
 
         self.assertEqual(len(httpretty.latest_requests()), 0)
+
+    def test_disables_snapshots_when_the_healthcheck_version_is_wrong(self):
+        mock_healthcheck(fail=True, fail_how='wrong-version')
+
+        with patch('builtins.print') as mock_print:
+            percy_snapshot(self.driver, 'Snapshot 1')
+            percy_snapshot(self.driver, 'Snapshot 2')
+
+            mock_print.assert_called_with(f'{LABEL} Unsupported Percy CLI version, 2.0.0')
+
+        self.assertEqual(httpretty.last_request().path, '/percy/healthcheck')
+
+    def test_disables_snapshots_when_the_healthcheck_version_is_missing(self):
+        mock_healthcheck(fail=True, fail_how='no-version')
+
+        with patch('builtins.print') as mock_print:
+            percy_snapshot(self.driver, 'Snapshot 1')
+            percy_snapshot(self.driver, 'Snapshot 2')
+
+            mock_print.assert_called_with(
+                f'{LABEL} You may be using @percy/agent which is no longer supported by this SDK. '
+                'Please uninstall @percy/agent and install @percy/cli instead. '
+                'https://docs.percy.io/docs/migrating-to-percy-cli')
+
+        self.assertEqual(httpretty.last_request().path, '/percy/healthcheck')
 
     def test_posts_snapshots_to_the_local_percy_server(self):
         mock_healthcheck()
