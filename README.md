@@ -58,12 +58,7 @@ $ percy exec -- [python test command]
 
 - `driver` (**required**) - A selenium-webdriver driver instance
 - `name` (**required**) - The snapshot name; must be unique to each snapshot
-- Additional snapshot options (overrides any project options) (`**kwargs**`):
-  - `widths` - An array of widths to take screenshots at
-  - `min_height` - The minimum viewport height to take screenshots at
-  - `percy_css` - Percy specific CSS only applied in Percy's rendering environment
-  - `request_headers` - Headers that should be used during asset discovery
-  - `enable_javascript` - Enable JavaScript in Percy's rendering environment
+- `**kwargs` - [See per-snapshot configuration options](https://docs.percy.io/docs/cli-configuration#per-snapshot-configuration)
 
 ### Migrating Config
 
