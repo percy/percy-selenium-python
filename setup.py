@@ -21,7 +21,7 @@ setup(
     packages=['percy'],
     include_package_data=True,
     install_requires=[
-        'selenium==3.*',
+        'selenium>=3,<5',
         'requests==2.*'
     ],
     python_requires='>=3.6',
