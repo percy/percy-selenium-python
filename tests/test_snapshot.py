@@ -23,7 +23,7 @@ class MockServerRequestHandler(BaseHTTPRequestHandler):
 # daemon threads automatically shut down when the main process exits
 mock_server = HTTPServer(('localhost', 8000), MockServerRequestHandler)
 mock_server_thread = Thread(target=mock_server.serve_forever)
-mock_server_thread.setDaemon(True)
+mock_server_thread.daemon = True
 mock_server_thread.start()
 
 # mock helpers
