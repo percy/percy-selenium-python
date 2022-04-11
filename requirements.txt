@@ -1,2 +1,2 @@
-selenium==4.*
+selenium>=3
 requests==2.*
