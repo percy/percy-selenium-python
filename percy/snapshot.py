@@ -22,7 +22,7 @@ LABEL = '[\u001b[35m' + ('percy:python' if PERCY_DEBUG else 'percy') + '\u001b[3
 @lru_cache(maxsize=None)
 def is_percy_enabled():
     try:
-        response = requests.get(f'{PERCY_CLI_API}/percy/healthcheck')
+        response = requests.get(f'{PERCY_CLI_API}/percy/healthcheck', timeout=30)
         response.raise_for_status()
         data = response.json()
 
@@ -49,7 +49,7 @@ def is_percy_enabled():
 # Fetch the @percy/dom script, caching the result so it is only fetched once
 @lru_cache(maxsize=None)
 def fetch_percy_dom():
-    response = requests.get(f'{PERCY_CLI_API}/percy/dom.js')
+    response = requests.get(f'{PERCY_CLI_API}/percy/dom.js', timeout=30)
     response.raise_for_status()
     return response.text
 
@@ -71,7 +71,7 @@ def percy_snapshot(driver, name, **kwargs):
             'dom_snapshot': dom_snapshot,
             'url': driver.current_url,
             'name': name
-        }))
+        }), timeout=30)
 
         # Handle errors
         response.raise_for_status()
