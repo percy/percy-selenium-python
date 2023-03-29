@@ -6,6 +6,7 @@ VENVDEPS=$(REQUIREMENTS setup.py)
 $(VENV):
 	python -m venv .venv
 	$(VENV)/python -m pip install --upgrade pip setuptools wheel
+	yarn
 
 $(VENV)/$(MARKER): $(VENVDEPS) | $(VENV)
 	$(VENV)/pip install $(foreach path,$(REQUIREMENTS),-r $(path))
