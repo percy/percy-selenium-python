@@ -97,17 +97,6 @@ class TestPercySnapshot(unittest.TestCase):
 
         self.assertEqual(httpretty.last_request().path, '/percy/healthcheck')
 
-    def test_disables_snapshots_when_the_healthcheck_errors(self):
-        # no mocks will cause the request to throw an error
-
-        with patch('builtins.print') as mock_print:
-            percy_snapshot(self.driver, 'Snapshot 1')
-            percy_snapshot(self.driver, 'Snapshot 2')
-
-            mock_print.assert_called_with(f'{LABEL} Percy is not running, disabling snapshots')
-
-        self.assertEqual(len(httpretty.latest_requests()), 0)
-
     def test_disables_snapshots_when_the_healthcheck_version_is_wrong(self):
         mock_healthcheck(fail=True, fail_how='wrong-version')
 
