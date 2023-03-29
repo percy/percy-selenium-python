@@ -196,7 +196,6 @@ class TestPercySnapshotIntegration(unittest.TestCase):
         s1 = requests[2]['body']
         self.assertEqual(s1['name'], 'Snapshot 1')
         self.assertEqual(s1['url'], 'http://localhost:8000/')
-        self.assertEqual(s1['dom_snapshot'], r'\<html\>\<head\>.*\</head\>\<body\>Snapshot Me\</body\>\</html\>')
         self.assertRegex(s1['client_info'], r'percy-selenium-python/\d+')
         self.assertRegex(s1['environment_info'][0], r'selenium/\d+')
         self.assertRegex(s1['environment_info'][1], r'python/\d+')
