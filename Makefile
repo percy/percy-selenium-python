@@ -19,7 +19,7 @@ lint: venv
 	$(VENV)/pylint percy/* tests/*
 
 test: venv
-	$(VENV)/python -m unittest tests.test_snapshot
+	npx percy exec --testing -- $(VENV)/python -m unittest tests.test_snapshot
 
 clean:
 	rm -rf $$(cat .gitignore)
