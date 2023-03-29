@@ -2,6 +2,7 @@
 fail-under=10.0
 disable=
   broad-except,
+  broad-exception-raised,
   global-statement,
   invalid-name,
   missing-class-docstring,
