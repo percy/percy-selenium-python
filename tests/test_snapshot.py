@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 
 import httpretty
+import requests
 from selenium.webdriver import Firefox, FirefoxOptions
 
 from percy import percy_snapshot, percySnapshot
@@ -164,6 +165,46 @@ class TestPercySnapshot(unittest.TestCase):
             percy_snapshot(self.driver, 'Snapshot 1')
 
             mock_print.assert_any_call(f'{LABEL} Could not take DOM snapshot "Snapshot 1"')
+ 
+def get_percy_test_requests():
+    response = requests.get('http://localhost:5338/test/requests')
+    data = response.json()
+    return data['requests']
+
+class TestPercySnapshotIntegration(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        options = FirefoxOptions()
+        options.add_argument('-headless')
+        cls.driver = Firefox(options=options)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.driver.quit()
+
+    def setUp(self):
+        # clear the cached value for testing
+        local.is_percy_enabled.cache_clear()
+        local.fetch_percy_dom.cache_clear()
+        self.driver.get('http://localhost:8000')
+
+    def test_posts_snapshots_to_the_local_percy_server(self):
+        percy_snapshot(self.driver, 'Snapshot 1')
+        percy_snapshot(self.driver, 'Snapshot 2', enable_javascript=True)
+
+        requests = get_percy_test_requests()
+        s1 = requests[2]['body']
+        self.assertEqual(s1['name'], 'Snapshot 1')
+        self.assertEqual(s1['url'], 'http://localhost:8000/')
+        self.assertEqual(s1['dom_snapshot'], '<html><head></head><body>Snapshot Me</body></html>')
+        self.assertRegex(s1['client_info'], r'percy-selenium-python/\d+')
+        self.assertRegex(s1['environment_info'][0], r'selenium/\d+')
+        self.assertRegex(s1['environment_info'][1], r'python/\d+')
+
+        s2 = requests[3]['body']
+        self.assertEqual(s2['name'], 'Snapshot 2')
+        self.assertEqual(s2['enable_javascript'], True)
+
 
 if __name__ == '__main__':
     unittest.main()
