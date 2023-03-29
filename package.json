@@ -1,7 +1,7 @@
 {
   "private": true,
   "scripts": {
-    "test": "percy exec --testing -- dotnet test"
+    "test": "make test"
   },
   "devDependencies": {
     "@percy/cli": "^1.16.0"
