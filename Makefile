@@ -6,6 +6,7 @@ VENVDEPS=$(REQUIREMENTS setup.py)
 $(VENV):
 	python -m venv .venv
 	$(VENV)/python -m pip install --upgrade pip setuptools wheel
+	yarn
 
 $(VENV)/$(MARKER): $(VENVDEPS) | $(VENV)
 	$(VENV)/pip install $(foreach path,$(REQUIREMENTS),-r $(path))
@@ -19,7 +20,7 @@ lint: venv
 	$(VENV)/pylint percy/* tests/*
 
 test: venv
-	$(VENV)/python -m unittest tests.test_snapshot
+	npx percy exec --testing -- $(VENV)/python -m unittest tests.test_snapshot
 
 clean:
 	rm -rf $$(cat .gitignore)

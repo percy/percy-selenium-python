@@ -65,13 +65,13 @@ def percy_snapshot(driver, name, **kwargs):
         dom_snapshot = driver.execute_script(f'return PercyDOM.serialize({json.dumps(kwargs)})')
 
         # Post the DOM to the snapshot endpoint with snapshot options and other info
-        response = requests.post(f'{PERCY_CLI_API}/percy/snapshot', json=dict(**kwargs, **{
+        response = requests.post(f'{PERCY_CLI_API}/percy/snapshot', json={**kwargs, **{
             'client_info': CLIENT_INFO,
             'environment_info': ENV_INFO,
             'dom_snapshot': dom_snapshot,
             'url': driver.current_url,
             'name': name
-        }), timeout=30)
+        }}, timeout=30)
 
         # Handle errors
         response.raise_for_status()
