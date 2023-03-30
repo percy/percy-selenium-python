@@ -13,8 +13,9 @@ jobs:
     name: Test
     strategy:
       matrix:
-        python: [3.7, 3.8, 3.9]
-    runs-on: ubuntu-latest
+        python: [3.6, 3.7, 3.8, 3.9]
+    runs-on: ${{ matrix.python == 3.6 && 'ubuntu-20.04' || ubuntu-latest }}
+
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-python@v4
