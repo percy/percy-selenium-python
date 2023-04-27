@@ -81,3 +81,28 @@ def percy_snapshot(driver, name, **kwargs):
     except Exception as e:
         print(f'{LABEL} Could not take DOM snapshot "{name}"')
         print(f'{LABEL} {e}')
+
+# Take screenshot on driver
+def percy_screenshot(driver, name, **kwargs):
+    if not is_percy_enabled(): return
+
+    try:
+        # Post to automateScreenshot endpoint with driver options and other info
+        response = requests.post(f'{PERCY_CLI_API}/percy/automateScreenshot', json={**kwargs, **{
+            'client_info': CLIENT_INFO,
+            'environment_info': ENV_INFO,
+            'sessionId': driver.session_id,
+            'commandExecutorUrl': driver.command_executor._url,
+            'capabilities': dict(driver.capabilities),
+            'sessionCapabilites':dict(driver.desired_capabilities),
+            'snapshotName': name
+        }}, timeout=30)
+
+        # Handle errors
+        response.raise_for_status()
+        data = response.json()
+
+        if not data['success']: raise Exception(data['error'])
+    except Exception as e:
+        print(f'{LABEL} Could not take Screenshot "{name}"')
+        print(f'{LABEL} {e}')
