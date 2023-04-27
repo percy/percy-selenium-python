@@ -5,7 +5,7 @@ from threading import Thread
 
 import httpretty
 import requests
-from selenium.webdriver import Firefox, FirefoxOptions, Remote
+from selenium.webdriver import Firefox, FirefoxOptions
 
 from percy import percy_snapshot, percySnapshot, percy_screenshot
 import percy.snapshot as local
@@ -24,6 +24,12 @@ class MockServerRequestHandler(BaseHTTPRequestHandler):
 class CommandExecutorMock():
     def __init__(self, url):
         self._url = url
+
+    def dummy_method(self):
+        pass
+
+    def dummy_method1(self):
+        pass
 
 class MockWebDriver():
     def __init__(self):
@@ -264,7 +270,7 @@ class TestPercyScreenshot(unittest.TestCase):
         s1 = httpretty.latest_requests()[1].parsed_body
         self.assertEqual(s1['snapshotName'], 'Snapshot 1')
         self.assertEqual(s1['sessionId'], self.driver.session_id)
-        self.assertEqual(s1['commandExecutorUrl'], self.driver.command_executor._url)
+        self.assertEqual(s1['commandExecutorUrl'], self.driver.command_executor._url) # pylint: disable=W0212
         self.assertEqual(s1['capabilities'], dict(self.driver.capabilities))
         self.assertEqual(s1['sessionCapabilites'], dict(self.driver.desired_capabilities))
         self.assertRegex(s1['client_info'], r'percy-selenium-python/\d+')

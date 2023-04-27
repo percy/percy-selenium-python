@@ -92,7 +92,7 @@ def percy_screenshot(driver, name, **kwargs):
             'client_info': CLIENT_INFO,
             'environment_info': ENV_INFO,
             'sessionId': driver.session_id,
-            'commandExecutorUrl': driver.command_executor._url,
+            'commandExecutorUrl': driver.command_executor._url, # pylint: disable=W0212
             'capabilities': dict(driver.capabilities),
             'sessionCapabilites':dict(driver.desired_capabilities),
             'snapshotName': name
