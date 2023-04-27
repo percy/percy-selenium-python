@@ -14,8 +14,15 @@ def percySnapshot(browser, *a, **kw):
 
 # import screenshot command
 try:
-    from percy.snapshot import percy_screenshot
+    from percy.screenshot import percy_screenshot
 except ImportError:
     def percy_screenshot(driver, *a, **kw):
         raise ModuleNotFoundError("[percy] `percy-appium-app` package is not installed, "\
                         "please install it to use percy_screenshot command")
+
+try:
+    from percy.snapshot import percy_automate_screenshot
+except ImportError:
+    def percy_automate_screenshot(driver, *a, **kw):
+        raise ModuleNotFoundError("[percy] `percy-selenium` package is not installed, "\
+                        "please install it to use percy_automate_screenshot command")
