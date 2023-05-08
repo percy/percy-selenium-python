@@ -6,6 +6,7 @@ import requests
 
 from selenium.webdriver import __version__ as SELENIUM_VERSION
 from percy.version import __version__ as SDK_VERSION
+from selenium.webdriver.remote.webdriver import WebDriver
 
 # Collect client and environment information
 CLIENT_INFO = 'percy-selenium-python/' + SDK_VERSION
@@ -83,8 +84,9 @@ def percy_snapshot(driver, name, **kwargs):
         print(f'{LABEL} {e}')
 
 # Take screenshot on driver
-def percy_automate_screenshot(driver, name, **kwargs):
+def percy_screenshot(driver, name, **kwargs):
     if not is_percy_enabled(): return
+    if not isinstance(driver, WebDriver): return
 
     try:
         # Post to automateScreenshot endpoint with driver options and other info
