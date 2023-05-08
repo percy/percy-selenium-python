@@ -3,10 +3,10 @@ import platform
 import json
 from functools import lru_cache
 import requests
+from selenium.webdriver.remote.webdriver import WebDriver
 
 from selenium.webdriver import __version__ as SELENIUM_VERSION
 from percy.version import __version__ as SDK_VERSION
-from selenium.webdriver.remote.webdriver import WebDriver
 
 # Collect client and environment information
 CLIENT_INFO = 'percy-selenium-python/' + SDK_VERSION

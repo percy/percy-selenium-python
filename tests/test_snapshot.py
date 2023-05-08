@@ -1,11 +1,12 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 
 import httpretty
 import requests
 from selenium.webdriver import Firefox, FirefoxOptions
+from selenium.webdriver.remote.webdriver import WebDriver
 
 from percy import percy_snapshot, percySnapshot, percy_screenshot
 import percy.snapshot as local
@@ -29,19 +30,6 @@ class CommandExecutorMock():
         pass
 
     def dummy_method1(self):
-        pass
-
-class MockWebDriver():
-    def __init__(self):
-        self.session_id = "Dummy_session_id"
-        self.capabilities = { "key": "value" }
-        self.desired_capabilities = { "key": "value" }
-        self.command_executor = CommandExecutorMock("https://hub-cloud.browserstack.com/wd/hub")
-
-    def get(self, url):
-        pass
-
-    def quit(self):
         pass
 
 # daemon threads automatically shut down when the main process exits
@@ -198,7 +186,13 @@ class TestPercySnapshot(unittest.TestCase):
 class TestPercyScreenshot(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.driver = MockWebDriver()
+        driver = Mock(spec=WebDriver)
+        driver.session_id = 'Dummy_session_id'
+        driver.capabilities = { 'key': 'value' }
+        driver.desired_capabilities = { 'key': 'value' }
+        driver.command_executor = CommandExecutorMock('https://hub-cloud.browserstack.com/wd/hub')
+
+        cls.driver = driver
 
     @classmethod
     def tearDownClass(cls):
@@ -256,6 +250,11 @@ class TestPercyScreenshot(unittest.TestCase):
                 'Please uninstall @percy/agent and install @percy/cli instead. '
                 'https://docs.percy.io/docs/migrating-to-percy-cli')
 
+        self.assertEqual(httpretty.last_request().path, '/percy/healthcheck')
+
+    def test_disables_screenshot_when_the_driver_is_not_selenium(self):
+        mock_healthcheck(fail=True, fail_how='no-version')
+        percy_screenshot("dummy_driver", 'Snapshot 1')
         self.assertEqual(httpretty.last_request().path, '/percy/healthcheck')
 
     def test_posts_screenshot_to_the_local_percy_server(self):
