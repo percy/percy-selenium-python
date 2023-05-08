@@ -18,4 +18,4 @@ try:
 except ImportError:
     def percy_screenshot(driver, *a, **kw):
         raise ModuleNotFoundError("[percy] `percy-selenium` package is not installed, "\
-                        "please install it to use percy_automate_screenshot command")
+                        "please install it to use percy_screenshot command")

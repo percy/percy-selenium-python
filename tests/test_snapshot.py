@@ -7,7 +7,7 @@ import httpretty
 import requests
 from selenium.webdriver import Firefox, FirefoxOptions
 
-from percy import percy_snapshot, percySnapshot, percy_automate_screenshot
+from percy import percy_snapshot, percySnapshot, percy_screenshot
 import percy.snapshot as local
 LABEL = local.LABEL
 
@@ -216,18 +216,18 @@ class TestPercyScreenshot(unittest.TestCase):
 
     def test_throws_error_when_a_driver_is_not_provided(self):
         with self.assertRaises(Exception):
-            percy_automate_screenshot()
+            percy_screenshot()
 
     def test_throws_error_when_a_name_is_not_provided(self):
         with self.assertRaises(Exception):
-            percy_automate_screenshot(self.driver)
+            percy_screenshot(self.driver)
 
     def test_disables_screenshot_when_the_healthcheck_fails(self):
         mock_healthcheck(fail=True)
 
         with patch('builtins.print') as mock_print:
-            percy_automate_screenshot(self.driver, 'Snapshot 1')
-            percy_automate_screenshot(self.driver, 'Snapshot 2')
+            percy_screenshot(self.driver, 'Snapshot 1')
+            percy_screenshot(self.driver, 'Snapshot 2')
 
             mock_print.assert_called_with(f'{LABEL} Percy is not running, disabling snapshots')
 
@@ -237,8 +237,8 @@ class TestPercyScreenshot(unittest.TestCase):
         mock_healthcheck(fail=True, fail_how='wrong-version')
 
         with patch('builtins.print') as mock_print:
-            percy_automate_screenshot(self.driver, 'Snapshot 1')
-            percy_automate_screenshot(self.driver, 'Snapshot 2')
+            percy_screenshot(self.driver, 'Snapshot 1')
+            percy_screenshot(self.driver, 'Snapshot 2')
 
             mock_print.assert_called_with(f'{LABEL} Unsupported Percy CLI version, 2.0.0')
 
@@ -248,8 +248,8 @@ class TestPercyScreenshot(unittest.TestCase):
         mock_healthcheck(fail=True, fail_how='no-version')
 
         with patch('builtins.print') as mock_print:
-            percy_automate_screenshot(self.driver, 'Snapshot 1')
-            percy_automate_screenshot(self.driver, 'Snapshot 2')
+            percy_screenshot(self.driver, 'Snapshot 1')
+            percy_screenshot(self.driver, 'Snapshot 2')
 
             mock_print.assert_called_with(
                 f'{LABEL} You may be using @percy/agent which is no longer supported by this SDK. '
@@ -262,8 +262,8 @@ class TestPercyScreenshot(unittest.TestCase):
         mock_healthcheck()
         mock_screenshot()
 
-        percy_automate_screenshot(self.driver, 'Snapshot 1')
-        percy_automate_screenshot(self.driver, 'Snapshot 2', enable_javascript=True)
+        percy_screenshot(self.driver, 'Snapshot 1')
+        percy_screenshot(self.driver, 'Snapshot 2', enable_javascript=True)
 
         self.assertEqual(httpretty.last_request().path, '/percy/automateScreenshot')
 
@@ -286,7 +286,7 @@ class TestPercyScreenshot(unittest.TestCase):
         mock_screenshot(fail=True)
 
         with patch('builtins.print') as mock_print:
-            percy_automate_screenshot(self.driver, 'Snapshot 1')
+            percy_screenshot(self.driver, 'Snapshot 1')
 
             mock_print.assert_any_call(f'{LABEL} Could not take Screenshot "Snapshot 1"')
 
