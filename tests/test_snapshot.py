@@ -7,9 +7,11 @@ import httpretty
 import requests
 from selenium.webdriver import Firefox, FirefoxOptions
 from selenium.webdriver.remote.webdriver import WebDriver
+from selenium.webdriver.remote.remote_connection import RemoteConnection
 
 from percy import percy_snapshot, percySnapshot, percy_screenshot
 import percy.snapshot as local
+from percy.custom_exception import UnsupportedWebDriverException
 LABEL = local.LABEL
 
 # mock a simple webpage to snapshot
@@ -190,7 +192,8 @@ class TestPercyScreenshot(unittest.TestCase):
         driver.session_id = 'Dummy_session_id'
         driver.capabilities = { 'key': 'value' }
         driver.desired_capabilities = { 'key': 'value' }
-        driver.command_executor = CommandExecutorMock('https://hub-cloud.browserstack.com/wd/hub')
+        driver.command_executor = Mock(spec=RemoteConnection)
+        driver.command_executor._url = 'https://hub-cloud.browserstack.com/wd/hub' # pylint: disable=W0212
 
         cls.driver = driver
 
@@ -254,8 +257,8 @@ class TestPercyScreenshot(unittest.TestCase):
 
     def test_disables_screenshot_when_the_driver_is_not_selenium(self):
         mock_healthcheck(fail=True, fail_how='no-version')
-        percy_screenshot("dummy_driver", 'Snapshot 1')
-        self.assertEqual(httpretty.last_request().path, '/percy/healthcheck')
+        with self.assertRaises(UnsupportedWebDriverException):
+            percy_screenshot("dummy_driver", 'Snapshot 1')
 
     def test_posts_screenshot_to_the_local_percy_server(self):
         mock_healthcheck()
