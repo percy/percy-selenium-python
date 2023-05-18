@@ -11,7 +11,7 @@ from selenium.webdriver.remote.remote_connection import RemoteConnection
 
 from percy import percy_snapshot, percySnapshot, percy_screenshot
 import percy.snapshot as local
-from percy.custom_exception import UnsupportedWebDriverException
+from percy.exception import UnsupportedWebDriverException
 LABEL = local.LABEL
 
 # mock a simple webpage to snapshot

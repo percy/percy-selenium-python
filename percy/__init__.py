@@ -1,6 +1,6 @@
 from percy.version import __version__
 from percy.snapshot import percy_automate_screenshot
-from percy.custom_exception import UnsupportedWebDriverException
+from percy.exception import UnsupportedWebDriverException
 
 # import snapshot command
 try:
