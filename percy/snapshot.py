@@ -87,16 +87,20 @@ def percy_automate_screenshot(driver, name, **kwargs):
     if not is_percy_enabled(): return
 
     try:
+        ignore_region_elements = ignore_regions_by_elements(kwargs.get("ignore_region_selenium_elements", []))
+        kwargs.pop("ignore_region_selenium_elements", None)
+
         # Post to automateScreenshot endpoint with driver options and other info
-        response = requests.post(f'{PERCY_CLI_API}/percy/automateScreenshot', json={**kwargs, **{
+        response = requests.post(f'{PERCY_CLI_API}/percy/automateScreenshot', json={
             'client_info': CLIENT_INFO,
             'environment_info': ENV_INFO,
             'sessionId': driver.session_id,
             'commandExecutorUrl': driver.command_executor._url, # pylint: disable=W0212
             'capabilities': dict(driver.capabilities),
             'sessionCapabilites':dict(driver.desired_capabilities),
-            'snapshotName': name
-        }}, timeout=30)
+            'snapshotName': name,
+            'options': { **kwargs, "ignore_region_selenium_elements": ignore_region_elements }
+        }, timeout=30)
 
         # Handle errors
         response.raise_for_status()
@@ -106,3 +110,10 @@ def percy_automate_screenshot(driver, name, **kwargs):
     except Exception as e:
         print(f'{LABEL} Could not take Screenshot "{name}"')
         print(f'{LABEL} {e}')
+
+def ignore_regions_by_elements(elements):
+    ignored_elements_array = []
+    for element in elements:
+        element_id = element.id
+        ignored_elements_array.append(element_id)
+    return ignored_elements_array
