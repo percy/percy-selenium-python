@@ -87,8 +87,8 @@ def percy_automate_screenshot(driver, name, **kwargs):
     if not is_percy_enabled(): return
 
     try:
-        ignore_region_elements = \
-            get_element_id_from_element(kwargs.get("ignore_region_selenium_elements", []))
+        ignore_region_elements = kwargs.get("ignore_region_selenium_elements", [])
+        ignore_region_elements = get_element_ids(ignore_region_elements)
         kwargs.pop("ignore_region_selenium_elements", None)
 
         # Post to automateScreenshot endpoint with driver options and other info
@@ -112,9 +112,5 @@ def percy_automate_screenshot(driver, name, **kwargs):
         print(f'{LABEL} Could not take Screenshot "{name}"')
         print(f'{LABEL} {e}')
 
-def get_element_id_from_element(elements):
-    elements_array = []
-    for element in elements:
-        element_id = element.id
-        elements_array.append(element_id)
-    return elements_array
+def get_element_ids(elements):
+    return [element.id for element in elements]
