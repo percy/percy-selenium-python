@@ -7,6 +7,7 @@ import httpretty
 import requests
 from selenium.webdriver import Firefox, FirefoxOptions
 from selenium.webdriver.remote.webdriver import WebDriver
+from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.remote.remote_connection import RemoteConnection
 
 from percy import percy_snapshot, percySnapshot, percy_screenshot
@@ -264,8 +265,11 @@ class TestPercyScreenshot(unittest.TestCase):
         mock_healthcheck()
         mock_screenshot()
 
+        element = Mock(spec=WebElement)
+        element.id = 'Dummy_id'
         percy_screenshot(self.driver, 'Snapshot 1')
-        percy_screenshot(self.driver, 'Snapshot 2', enable_javascript=True)
+        percy_screenshot(self.driver, 'Snapshot 2', enable_javascript=True,
+                          ignore_region_selenium_elements= [element])
 
         self.assertEqual(httpretty.last_request().path, '/percy/automateScreenshot')
 
@@ -281,7 +285,8 @@ class TestPercyScreenshot(unittest.TestCase):
 
         s2 = httpretty.latest_requests()[2].parsed_body
         self.assertEqual(s2['snapshotName'], 'Snapshot 2')
-        self.assertEqual(s2['enable_javascript'], True)
+        self.assertEqual(s2['options']['enable_javascript'], True)
+        self.assertEqual(s2['options']['ignore_region_selenium_elements'], ['Dummy_id'])
 
     def test_handles_screenshot_errors(self):
         mock_healthcheck()
