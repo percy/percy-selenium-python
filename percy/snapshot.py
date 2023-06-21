@@ -101,7 +101,7 @@ def percy_automate_screenshot(driver, name, **kwargs):
             'capabilities': dict(driver.capabilities),
             'sessionCapabilites':dict(driver.desired_capabilities),
             'snapshotName': name,
-            'options': { **kwargs, "ignore_region_selenium_elements": ignore_region_elements }
+            'options': { **kwargs, "ignore_region_elements": ignore_region_elements }
         }, timeout=30)
 
         # Handle errors

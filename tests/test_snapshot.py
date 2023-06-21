@@ -286,7 +286,7 @@ class TestPercyScreenshot(unittest.TestCase):
         s2 = httpretty.latest_requests()[2].parsed_body
         self.assertEqual(s2['snapshotName'], 'Snapshot 2')
         self.assertEqual(s2['options']['enable_javascript'], True)
-        self.assertEqual(s2['options']['ignore_region_selenium_elements'], ['Dummy_id'])
+        self.assertEqual(s2['options']['ignore_region_elements'], ['Dummy_id'])
 
     def test_handles_screenshot_errors(self):
         mock_healthcheck()
