@@ -83,8 +83,10 @@ def percy_snapshot(driver, name, **kwargs):
         print(f'{LABEL} {e}')
 
 # Take screenshot on driver
-def percy_automate_screenshot(driver, name, options = {}, **kwargs):
+def percy_automate_screenshot(driver, name, options = None, **kwargs):
     if not is_percy_enabled(): return
+    if options is None:
+        options = {}
 
     try:
         ignore_region_elements = get_element_ids(
