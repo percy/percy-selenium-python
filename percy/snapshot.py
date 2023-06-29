@@ -83,7 +83,7 @@ def percy_snapshot(driver, name, **kwargs):
         print(f'{LABEL} {e}')
 
 # Take screenshot on driver
-def percy_automate_screenshot(driver, name, options = dict(), **kwargs):
+def percy_automate_screenshot(driver, name, options = {}, **kwargs):
     if not is_percy_enabled(): return
 
     try:
