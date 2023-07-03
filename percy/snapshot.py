@@ -81,3 +81,40 @@ def percy_snapshot(driver, name, **kwargs):
     except Exception as e:
         print(f'{LABEL} Could not take DOM snapshot "{name}"')
         print(f'{LABEL} {e}')
+
+# Take screenshot on driver
+def percy_automate_screenshot(driver, name, options = None, **kwargs):
+    if not is_percy_enabled(): return
+    if options is None:
+        options = {}
+
+    try:
+        ignore_region_elements = get_element_ids(
+            options.get("ignore_region_selenium_elements", [])
+        )
+        options.pop("ignore_region_selenium_elements", None)
+        options["ignore_region_elements"] = ignore_region_elements
+
+        # Post to automateScreenshot endpoint with driver options and other info
+        response = requests.post(f'{PERCY_CLI_API}/percy/automateScreenshot', json={**kwargs, **{
+            'client_info': CLIENT_INFO,
+            'environment_info': ENV_INFO,
+            'sessionId': driver.session_id,
+            'commandExecutorUrl': driver.command_executor._url, # pylint: disable=W0212
+            'capabilities': dict(driver.capabilities),
+            'sessionCapabilites':dict(driver.desired_capabilities),
+            'snapshotName': name,
+            'options': options
+        }}, timeout=60)
+
+        # Handle errors
+        response.raise_for_status()
+        data = response.json()
+
+        if not data['success']: raise Exception(data['error'])
+    except Exception as e:
+        print(f'{LABEL} Could not take Screenshot "{name}"')
+        print(f'{LABEL} {e}')
+
+def get_element_ids(elements):
+    return [element.id for element in elements]

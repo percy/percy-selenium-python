@@ -1,14 +1,18 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 
 import httpretty
 import requests
 from selenium.webdriver import Firefox, FirefoxOptions
+from selenium.webdriver.remote.webdriver import WebDriver
+from selenium.webdriver.remote.webelement import WebElement
+from selenium.webdriver.remote.remote_connection import RemoteConnection
 
-from percy import percy_snapshot, percySnapshot
+from percy import percy_snapshot, percySnapshot, percy_screenshot
 import percy.snapshot as local
+from percy.exception import UnsupportedWebDriverException
 LABEL = local.LABEL
 
 # mock a simple webpage to snapshot
@@ -20,6 +24,16 @@ class MockServerRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(('Snapshot Me').encode('utf-8'))
     def log_message(self, format, *args):
         return
+
+class CommandExecutorMock():
+    def __init__(self, url):
+        self._url = url
+
+    def dummy_method(self):
+        pass
+
+    def dummy_method1(self):
+        pass
 
 # daemon threads automatically shut down when the main process exits
 mock_server = HTTPServer(('localhost', 8000), MockServerRequestHandler)
@@ -54,6 +68,12 @@ def mock_healthcheck(fail=False, fail_how='error'):
 def mock_snapshot(fail=False):
     httpretty.register_uri(
         httpretty.POST, 'http://localhost:5338/percy/snapshot',
+        body=('{ "success": ' + ('true' if not fail else 'false, "error": "test"') + '}'),
+        status=(500 if fail else 200))
+
+def mock_screenshot(fail=False):
+    httpretty.register_uri(
+        httpretty.POST, 'http://localhost:5338/percy/automateScreenshot',
         body=('{ "success": ' + ('true' if not fail else 'false, "error": "test"') + '}'),
         status=(500 if fail else 200))
 
@@ -165,6 +185,118 @@ class TestPercySnapshot(unittest.TestCase):
             percy_snapshot(self.driver, 'Snapshot 1')
 
             mock_print.assert_any_call(f'{LABEL} Could not take DOM snapshot "Snapshot 1"')
+
+class TestPercyScreenshot(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        driver = Mock(spec=WebDriver)
+        driver.session_id = 'Dummy_session_id'
+        driver.capabilities = { 'key': 'value' }
+        driver.desired_capabilities = { 'key': 'value' }
+        driver.command_executor = Mock(spec=RemoteConnection)
+        driver.command_executor._url = 'https://hub-cloud.browserstack.com/wd/hub' # pylint: disable=W0212
+
+        cls.driver = driver
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.driver.quit()
+
+    def setUp(self):
+        # clear the cached value for testing
+        local.is_percy_enabled.cache_clear()
+        self.driver.get('http://localhost:8000')
+        httpretty.enable()
+
+    def tearDown(self):
+        httpretty.disable()
+        httpretty.reset()
+
+    def test_throws_error_when_a_driver_is_not_provided(self):
+        with self.assertRaises(Exception):
+            percy_screenshot()
+
+    def test_throws_error_when_a_name_is_not_provided(self):
+        with self.assertRaises(Exception):
+            percy_screenshot(self.driver)
+
+    def test_disables_screenshot_when_the_healthcheck_fails(self):
+        mock_healthcheck(fail=True)
+
+        with patch('builtins.print') as mock_print:
+            percy_screenshot(self.driver, 'Snapshot 1')
+            percy_screenshot(self.driver, 'Snapshot 2')
+
+            mock_print.assert_called_with(f'{LABEL} Percy is not running, disabling snapshots')
+
+        self.assertEqual(httpretty.last_request().path, '/percy/healthcheck')
+
+    def test_disables_screenshot_when_the_healthcheck_version_is_wrong(self):
+        mock_healthcheck(fail=True, fail_how='wrong-version')
+
+        with patch('builtins.print') as mock_print:
+            percy_screenshot(self.driver, 'Snapshot 1')
+            percy_screenshot(self.driver, 'Snapshot 2')
+
+            mock_print.assert_called_with(f'{LABEL} Unsupported Percy CLI version, 2.0.0')
+
+        self.assertEqual(httpretty.last_request().path, '/percy/healthcheck')
+
+    def test_disables_screenshot_when_the_healthcheck_version_is_missing(self):
+        mock_healthcheck(fail=True, fail_how='no-version')
+
+        with patch('builtins.print') as mock_print:
+            percy_screenshot(self.driver, 'Snapshot 1')
+            percy_screenshot(self.driver, 'Snapshot 2')
+
+            mock_print.assert_called_with(
+                f'{LABEL} You may be using @percy/agent which is no longer supported by this SDK. '
+                'Please uninstall @percy/agent and install @percy/cli instead. '
+                'https://docs.percy.io/docs/migrating-to-percy-cli')
+
+        self.assertEqual(httpretty.last_request().path, '/percy/healthcheck')
+
+    def test_disables_screenshot_when_the_driver_is_not_selenium(self):
+        mock_healthcheck(fail=True, fail_how='no-version')
+        with self.assertRaises(UnsupportedWebDriverException):
+            percy_screenshot("dummy_driver", 'Snapshot 1')
+
+    def test_posts_screenshot_to_the_local_percy_server(self):
+        mock_healthcheck()
+        mock_screenshot()
+
+        element = Mock(spec=WebElement)
+        element.id = 'Dummy_id'
+        percy_screenshot(self.driver, 'Snapshot 1')
+        percy_screenshot(self.driver, 'Snapshot 2', options = { "enable_javascript": True,
+                          "ignore_region_selenium_elements": [element]})
+
+        self.assertEqual(httpretty.last_request().path, '/percy/automateScreenshot')
+
+        s1 = httpretty.latest_requests()[1].parsed_body
+        self.assertEqual(s1['snapshotName'], 'Snapshot 1')
+        self.assertEqual(s1['sessionId'], self.driver.session_id)
+        self.assertEqual(s1['commandExecutorUrl'], self.driver.command_executor._url) # pylint: disable=W0212
+        self.assertEqual(s1['capabilities'], dict(self.driver.capabilities))
+        self.assertEqual(s1['sessionCapabilites'], dict(self.driver.desired_capabilities))
+        self.assertRegex(s1['client_info'], r'percy-selenium-python/\d+')
+        self.assertRegex(s1['environment_info'][0], r'selenium/\d+')
+        self.assertRegex(s1['environment_info'][1], r'python/\d+')
+
+        s2 = httpretty.latest_requests()[2].parsed_body
+        self.assertEqual(s2['snapshotName'], 'Snapshot 2')
+        self.assertEqual(s2['options']['enable_javascript'], True)
+        self.assertEqual(s2['options']['ignore_region_elements'], ['Dummy_id'])
+
+    def test_handles_screenshot_errors(self):
+        mock_healthcheck()
+        mock_screenshot(fail=True)
+
+        with patch('builtins.print') as mock_print:
+            percy_screenshot(self.driver, 'Snapshot 1')
+
+            mock_print.assert_any_call(f'{LABEL} Could not take Screenshot "Snapshot 1"')
+
 def get_percy_test_requests():
     response = requests.get('http://localhost:5338/test/requests', timeout=10)
     data = response.json()

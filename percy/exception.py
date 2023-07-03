@@ -1,0 +1,2 @@
+class UnsupportedWebDriverException(Exception):
+    pass
