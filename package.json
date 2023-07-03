@@ -4,6 +4,7 @@
     "test": "make test"
   },
   "devDependencies": {
-    "@percy/cli": "^1.16.0"
+    "@percy/cli": "1.27.0-alpha.0",
+    "@percy/webdriver-utils": "1.27.0-alpha.0"
   }
 }
