@@ -272,7 +272,7 @@ class TestPercyScreenshot(unittest.TestCase):
         consider_element.id = 'Consider_Dummy_id'
 
         percy_screenshot(self.driver, 'Snapshot 1')
-        percy_screenshot(self.driver, 'Snapshot 2', options = { 
+        percy_screenshot(self.driver, 'Snapshot 2', options = {
             "enable_javascript": True,
             "ignore_region_selenium_elements": [element],
             "consider_region_selenium_elements": [consider_element]
