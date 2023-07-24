@@ -89,6 +89,12 @@ def percy_automate_screenshot(driver, name, options = None, **kwargs):
         options = {}
 
     try:
+        if 'ignoreRegionSeleniumElements' in options:
+            options['ignore_region_selenium_elements'] = options['ignoreRegionSeleniumElements']
+
+        if 'considerRegionSeleniumElements' in options:
+            options['consider_region_selenium_elements'] = options['considerRegionSeleniumElements']
+
         ignore_region_elements = get_element_ids(
             options.get("ignore_region_selenium_elements", [])
         )
