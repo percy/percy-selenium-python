@@ -261,15 +261,41 @@ class TestPercyScreenshot(unittest.TestCase):
         with self.assertRaises(UnsupportedWebDriverException):
             percy_screenshot("dummy_driver", 'Snapshot 1')
 
+    def test_camelcase_options(self):
+        mock_healthcheck()
+        mock_screenshot()
+
+        element = Mock(spec=WebElement)
+        element.id = 'Dummy_id'
+
+        consider_element = Mock(spec=WebElement)
+        consider_element.id = 'Consider_Dummy_id'
+        percy_screenshot(self.driver, 'Snapshot C', options = {
+            "ignoreRegionSeleniumElements": [element],
+            "considerRegionSeleniumElements": [consider_element]
+        })
+
+        s = httpretty.latest_requests()[1].parsed_body
+        self.assertEqual(s['snapshotName'], 'Snapshot C')
+        self.assertEqual(s['options']['ignore_region_elements'], ['Dummy_id'])
+        self.assertEqual(s['options']['consider_region_elements'], ['Consider_Dummy_id'])
+
     def test_posts_screenshot_to_the_local_percy_server(self):
         mock_healthcheck()
         mock_screenshot()
 
         element = Mock(spec=WebElement)
         element.id = 'Dummy_id'
+
+        consider_element = Mock(spec=WebElement)
+        consider_element.id = 'Consider_Dummy_id'
+
         percy_screenshot(self.driver, 'Snapshot 1')
-        percy_screenshot(self.driver, 'Snapshot 2', options = { "enable_javascript": True,
-                          "ignore_region_selenium_elements": [element]})
+        percy_screenshot(self.driver, 'Snapshot 2', options = {
+            "enable_javascript": True,
+            "ignore_region_selenium_elements": [element],
+            "consider_region_selenium_elements": [consider_element]
+        })
 
         self.assertEqual(httpretty.last_request().path, '/percy/automateScreenshot')
 
@@ -287,6 +313,7 @@ class TestPercyScreenshot(unittest.TestCase):
         self.assertEqual(s2['snapshotName'], 'Snapshot 2')
         self.assertEqual(s2['options']['enable_javascript'], True)
         self.assertEqual(s2['options']['ignore_region_elements'], ['Dummy_id'])
+        self.assertEqual(s2['options']['consider_region_elements'], ['Consider_Dummy_id'])
 
     def test_handles_screenshot_errors(self):
         mock_healthcheck()
