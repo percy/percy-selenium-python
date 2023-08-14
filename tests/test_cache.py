@@ -5,8 +5,7 @@ from unittest.mock import patch
 from percy.cache import Cache
 
 class TestCache(unittest.TestCase):
-    def __init__(self):
-        super().__init__()
+    def setUp(self) -> None:
         self.cache = Cache
         self.session_id = 'session_id_123'
         self.command_executor_url = 'https://example-hub:4444/wd/hub'
@@ -22,7 +21,6 @@ class TestCache(unittest.TestCase):
             'session_name': 'abc'
           }
 
-    def setUp(self):
         self.cache.set_cache(self.session_id, Cache.command_executor_url, self.command_executor_url)
         self.cache.set_cache(self.session_id, Cache.capabilities, self.capabilities)
         self.cache.set_cache(self.session_id, Cache.session_capabilites, self.session_capabilities)
@@ -30,11 +28,11 @@ class TestCache(unittest.TestCase):
     def test_set_cache(self):
         with self.assertRaises(Exception) as e:
             self.cache.set_cache(123, 123, 123)
-        self.assertEqual(str(e.exception), 'Argument session_id should be a string')
+        self.assertEqual(str(e.exception), 'Argument session_id should be string')
 
         with self.assertRaises(Exception) as e:
             self.cache.set_cache(self.session_id, 123, 123)
-        self.assertEqual(str(e.exception), 'Argument property should be a string')
+        self.assertEqual(str(e.exception), 'Argument property should be string')
 
         self.assertIn(self.session_id, self.cache.CACHE)
         self.assertEqual(self.cache.CACHE[self.session_id][Cache.command_executor_url],
@@ -47,14 +45,14 @@ class TestCache(unittest.TestCase):
     def test_get_cache_invalid_args(self):
         with self.assertRaises(Exception) as e:
             self.cache.get_cache(123, 123)
-        self.assertEqual(str(e.exception), 'Argument session_id should be a string')
+        self.assertEqual(str(e.exception), 'Argument session_id should be string')
 
         with self.assertRaises(Exception) as e:
             self.cache.get_cache(self.session_id, 123)
         self.assertEqual(str(e.exception), 'Argument property should be string')
 
     @patch.object(Cache, 'cleanup_cache')
-    def test_get_cache_success(self):
+    def test_get_cache_success(self, mock_cleanup_cache):
         url = self.cache.get_cache(self.session_id, Cache.command_executor_url)
         self.assertEqual(url, self.command_executor_url)
         caps = self.cache.get_cache(self.session_id, Cache.capabilities)
