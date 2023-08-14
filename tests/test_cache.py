@@ -58,7 +58,8 @@ class TestCache(unittest.TestCase):
         caps = self.cache.get_cache(self.session_id, Cache.capabilities)
         self.assertDictEqual(caps, self.capabilities)
         session_caps = self.cache.get_cache(self.session_id, Cache.session_capabilites)
-        self.assertEqual(session_caps, self.session_capabilities)
+        self.assertDictEqual(session_caps, self.session_capabilities)
+        mock_cleanup_cache.assert_called()
 
     @patch('percy.cache.Cache.CACHE_TIMEOUT', 1)
     def test_cleanup_cache(self):
