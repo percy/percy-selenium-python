@@ -6,7 +6,7 @@ class Cache:
     TIMEOUT_KEY = 'last_access_time'
 
     # Caching Keys
-    session_capabilites = 'session_capabilites'
+    session_capabilities = 'session_capabilities'
     capabilities = 'capabilities'
     command_executor_url = 'command_executor_url'
 

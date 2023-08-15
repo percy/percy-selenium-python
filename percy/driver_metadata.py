@@ -28,9 +28,9 @@ class DriverMetaData:
 
     @property
     def session_capabilities(self):
-        session_caps = Cache.get_cache(self.session_id, Cache.session_capabilites)
+        session_caps = Cache.get_cache(self.session_id, Cache.session_capabilities)
         if session_caps is None:
             session_caps = dict(self.driver.desired_capabilities)
-            Cache.set_cache(self.session_id, Cache.session_capabilites, session_caps)
+            Cache.set_cache(self.session_id, Cache.session_capabilities, session_caps)
             return session_caps
         return session_caps
