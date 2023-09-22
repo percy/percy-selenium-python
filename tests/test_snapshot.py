@@ -197,7 +197,10 @@ class TestPercySnapshot(unittest.TestCase):
         with self.assertRaises(Exception) as context:
             percy_snapshot(self.driver, "Snapshot 1")
 
-        self.assertEqual("Invalid function call - percy_snapshot(). Please use percy_screenshot() function while using Percy with Automate. For more information on usage of PercyScreenshot, refer https://docs.percy.io/docs/integrate-functional-testing-with-visual-testing", str(context.exception))
+        self.assertEqual("Invalid function call - "\
+        "percy_snapshot(). Please use percy_screenshot() function while using Percy with Automate."\
+        " For more information on usage of PercyScreenshot, refer https://docs.percy.io/docs"\
+        "/integrate-functional-testing-with-visual-testing", str(context.exception))
 
 class TestPercyScreenshot(unittest.TestCase):
     @classmethod
@@ -343,7 +346,11 @@ class TestPercyScreenshot(unittest.TestCase):
         with self.assertRaises(Exception) as context:
             percy_screenshot(self.driver, "Snapshot 1")
 
-        self.assertEqual("Invalid function call - percy_screenshot(). Please use percy_snapshot() function for taking screenshot. percy_screenshot() should be used only while using Percy with Automate. For more information on usage of percy_snapshot(), refer doc for your language https://docs.percy.io/docs/end-to-end-testing", str(context.exception))
+        self.assertEqual("Invalid function call - "\
+        "percy_screenshot(). Please use percy_snapshot() function for taking screenshot. "\
+        "percy_screenshot() should be used only while using Percy with Automate. "\
+        "For more information on usage of percy_snapshot(), refer doc for your language "\
+        "https://docs.percy.io/docs/end-to-end-testing", str(context.exception))
 
 def get_percy_test_requests():
     response = requests.get('http://localhost:5338/test/requests', timeout=10)
