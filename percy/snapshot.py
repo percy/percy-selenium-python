@@ -6,6 +6,7 @@ import requests
 
 from selenium.webdriver import __version__ as SELENIUM_VERSION
 from percy.version import __version__ as SDK_VERSION
+from percy.driver_metadata import DriverMetaData
 
 # Collect client and environment information
 CLIENT_INFO = 'percy-selenium-python/' + SDK_VERSION
@@ -89,6 +90,7 @@ def percy_automate_screenshot(driver, name, options = None, **kwargs):
         options = {}
 
     try:
+        metadata = DriverMetaData(driver)
         if 'ignoreRegionSeleniumElements' in options:
             options['ignore_region_selenium_elements'] = options['ignoreRegionSeleniumElements']
             options.pop('ignoreRegionSeleniumElements')
@@ -112,10 +114,10 @@ def percy_automate_screenshot(driver, name, options = None, **kwargs):
         response = requests.post(f'{PERCY_CLI_API}/percy/automateScreenshot', json={**kwargs, **{
             'client_info': CLIENT_INFO,
             'environment_info': ENV_INFO,
-            'sessionId': driver.session_id,
-            'commandExecutorUrl': driver.command_executor._url, # pylint: disable=W0212
-            'capabilities': dict(driver.capabilities),
-            'sessionCapabilites':dict(driver.desired_capabilities),
+            'sessionId': metadata.session_id,
+            'commandExecutorUrl': metadata.command_executor_url,
+            'capabilities': metadata.capabilities,
+            'sessionCapabilites': metadata.session_capabilities,
             'snapshotName': name,
             'options': options
         }}, timeout=60)

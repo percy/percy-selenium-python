@@ -21,6 +21,8 @@ lint: venv
 
 test: venv
 	npx percy exec --testing -- $(VENV)/python -m unittest tests.test_snapshot
+	$(VENV)/python -m unittest tests.test_cache
+	$(VENV)/python -m unittest tests.test_driver_metadata
 
 clean:
 	rm -rf $$(cat .gitignore)
