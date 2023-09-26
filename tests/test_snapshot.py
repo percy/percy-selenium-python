@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch, Mock
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
+import json
 
 import httpretty
 import requests
@@ -42,19 +43,23 @@ mock_server_thread.daemon = True
 mock_server_thread.start()
 
 # mock helpers
-def mock_healthcheck(fail=False, fail_how='error'):
-    health_body = '{ "success": true }'
+def mock_healthcheck(fail=False, fail_how='error', session_type=None):
+    health_body = { "success": True }
     health_headers = { 'X-Percy-Core-Version': '1.0.0' }
     health_status = 200
 
     if fail and fail_how == 'error':
-        health_body = '{ "success": false, "error": "test" }'
+        health_body = { "success": False, "error": "test" }
         health_status = 500
     elif fail and fail_how == 'wrong-version':
         health_headers = { 'X-Percy-Core-Version': '2.0.0' }
     elif fail and fail_how == 'no-version':
         health_headers = {}
 
+    if session_type:
+        health_body["type"] = session_type
+
+    health_body = json.dumps(health_body)
     httpretty.register_uri(
         httpretty.GET, 'http://localhost:5338/percy/healthcheck',
         body=health_body,
@@ -178,13 +183,24 @@ class TestPercySnapshot(unittest.TestCase):
         self.assertEqual(s1['dom_snapshot'], '<html><head></head><body>Snapshot Me</body></html>')
 
     def test_handles_snapshot_errors(self):
-        mock_healthcheck()
+        mock_healthcheck(session_type="web")
         mock_snapshot(fail=True)
 
         with patch('builtins.print') as mock_print:
             percy_snapshot(self.driver, 'Snapshot 1')
 
             mock_print.assert_any_call(f'{LABEL} Could not take DOM snapshot "Snapshot 1"')
+
+    def test_raise_error_poa_token_with_snapshot(self):
+        mock_healthcheck(session_type="automate")
+
+        with self.assertRaises(Exception) as context:
+            percy_snapshot(self.driver, "Snapshot 1")
+
+        self.assertEqual("Invalid function call - "\
+        "percy_snapshot(). Please use percy_screenshot() function while using Percy with Automate."\
+        " For more information on usage of PercyScreenshot, refer https://docs.percy.io/docs"\
+        "/integrate-functional-testing-with-visual-testing", str(context.exception))
 
 class TestPercyScreenshot(unittest.TestCase):
     @classmethod
@@ -316,13 +332,25 @@ class TestPercyScreenshot(unittest.TestCase):
         self.assertEqual(s2['options']['consider_region_elements'], ['Consider_Dummy_id'])
 
     def test_handles_screenshot_errors(self):
-        mock_healthcheck()
+        mock_healthcheck(session_type="automate")
         mock_screenshot(fail=True)
 
         with patch('builtins.print') as mock_print:
             percy_screenshot(self.driver, 'Snapshot 1')
 
             mock_print.assert_any_call(f'{LABEL} Could not take Screenshot "Snapshot 1"')
+
+    def test_raise_error_web_token_with_screenshot(self):
+        mock_healthcheck(session_type="web")
+
+        with self.assertRaises(Exception) as context:
+            percy_screenshot(self.driver, "Snapshot 1")
+
+        self.assertEqual("Invalid function call - "\
+        "percy_screenshot(). Please use percy_snapshot() function for taking screenshot. "\
+        "percy_screenshot() should be used only while using Percy with Automate. "\
+        "For more information on usage of percy_snapshot(), refer doc for your language "\
+        "https://docs.percy.io/docs/end-to-end-testing", str(context.exception))
 
 def get_percy_test_requests():
     response = requests.get('http://localhost:5338/test/requests', timeout=10)

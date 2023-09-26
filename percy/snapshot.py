@@ -26,6 +26,7 @@ def is_percy_enabled():
         response = requests.get(f'{PERCY_CLI_API}/percy/healthcheck', timeout=30)
         response.raise_for_status()
         data = response.json()
+        session_type =  data.get('type', None)
 
         if not data['success']: raise Exception(data['error'])
         version = response.headers.get('x-percy-core-version')
@@ -41,7 +42,7 @@ def is_percy_enabled():
             print(f'{LABEL} Unsupported Percy CLI version, {version}')
             return False
 
-        return True
+        return session_type
     except Exception as e:
         print(f'{LABEL} Percy is not running, disabling snapshots')
         if PERCY_DEBUG: print(f'{LABEL} {e}')
@@ -56,7 +57,13 @@ def fetch_percy_dom():
 
 # Take a DOM snapshot and post it to the snapshot endpoint
 def percy_snapshot(driver, name, **kwargs):
-    if not is_percy_enabled(): return
+    session_type = is_percy_enabled()
+    if session_type is False: return # Since session_type can be None for old CLI version
+    if session_type == "automate": raise Exception("Invalid function call - "\
+      "percy_snapshot(). Please use percy_screenshot() function while using Percy with Automate. "\
+      "For more information on usage of PercyScreenshot, "\
+      "refer https://docs.percy.io/docs/integrate-functional-testing-with-visual-testing")
+
 
     try:
         # Inject the DOM serialization script
@@ -85,7 +92,14 @@ def percy_snapshot(driver, name, **kwargs):
 
 # Take screenshot on driver
 def percy_automate_screenshot(driver, name, options = None, **kwargs):
-    if not is_percy_enabled(): return
+    session_type = is_percy_enabled()
+    if session_type is False: return # Since session_type can be None for old CLI version
+    if session_type == "web": raise Exception("Invalid function call - "\
+      "percy_screenshot(). Please use percy_snapshot() function for taking screenshot. "\
+      "percy_screenshot() should be used only while using Percy with Automate. "\
+      "For more information on usage of percy_snapshot(), "\
+      "refer doc for your language https://docs.percy.io/docs/end-to-end-testing")
+
     if options is None:
         options = {}
 
