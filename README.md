@@ -110,10 +110,10 @@ percy_screenshot(driver, name = 'Screenshot 1')
       - example:```{"top": 10, "right": 10, "bottom": 120, "left": 10}```
       - In above example it will draw rectangle of consider region will be drawn.
       - Parameters:
-        - `top` (int): Top coordinate of the ignore region.
-        - `bottom` (int): Bottom coordinate of the ignore region.
-        - `left` (int): Left coordinate of the ignore region.
-        - `right` (int): Right coordinate of the ignore region.
+        - `top` (int): Top coordinate of the consider region.
+        - `bottom` (int): Bottom coordinate of the consider region.
+        - `left` (int): Left coordinate of the consider region.
+        - `right` (int): Right coordinate of the consider region.
 
 
 ### Creating Percy on automate build
