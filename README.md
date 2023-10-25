@@ -90,8 +90,8 @@ percy_screenshot(driver, name = 'Screenshot 1')
 - `name` (**required**) - The screenshot name; must be unique to each screenshot
 - `options` (**optional**) - There are various options supported by percy_screenshot to server further functionality.
     - `freeze_animated_image` - Boolean value by default it falls back to `false`, you can pass `true` and percy will freeze image based animations.
-    - `freeze_image_by_selectors` - List of selectors. Images will be freezed which are passed using selectors.
-    - `freeze_image_by_xpaths` - List of xpaths. Images will be freezed which are passed using xpaths.
+    - `freeze_image_by_selectors` -List of selectors. Images will be freezed which are passed using selectors. For this to work `freeze_animated_image` must be set to true.
+    - `freeze_image_by_xpaths` - List of xpaths. Images will be freezed which are passed using xpaths. For this to work `freeze_animated_image` must be set to true.
     - `percy_css` - Custom CSS to be added to DOM before the screenshot being taken. Note: This gets removed once the screenshot is taken.
     - `ignore_region_xpaths` - List of xpaths. elements in the DOM can be ignored using xpath
     - `ignore_region_selectors` - List of selectors. elements in the DOM can be ignored using selectors.
