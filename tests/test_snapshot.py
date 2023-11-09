@@ -10,6 +10,7 @@ from selenium.webdriver import Firefox, FirefoxOptions
 from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.remote.remote_connection import RemoteConnection
+from selenium.webdriver.safari.remote_connection import SafariRemoteConnection
 
 from percy import percy_snapshot, percySnapshot, percy_screenshot
 import percy.snapshot as local
@@ -205,15 +206,18 @@ class TestPercySnapshot(unittest.TestCase):
 class TestPercyScreenshot(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        driver = Mock(spec=WebDriver)
+        driver = cls.get_driver()
+        cls.driver = driver
+
+    @classmethod
+    def get_driver(cls, mock_driver = WebDriver, mock_connection = RemoteConnection):
+        driver = Mock(spec=mock_driver)
         driver.session_id = 'Dummy_session_id'
         driver.capabilities = { 'key': 'value' }
         driver.desired_capabilities = { 'key': 'value' }
-        driver.command_executor = Mock(spec=RemoteConnection)
+        driver.command_executor = Mock(spec=mock_connection)
         driver.command_executor._url = 'https://hub-cloud.browserstack.com/wd/hub' # pylint: disable=W0212
-
-        cls.driver = driver
-
+        return driver
     @classmethod
     def tearDownClass(cls):
         cls.driver.quit()
@@ -296,7 +300,7 @@ class TestPercyScreenshot(unittest.TestCase):
         self.assertEqual(s['options']['ignore_region_elements'], ['Dummy_id'])
         self.assertEqual(s['options']['consider_region_elements'], ['Consider_Dummy_id'])
 
-    def test_posts_screenshot_to_the_local_percy_server(self):
+    def posts_screenshot_to_the_local_percy_server(self, driver):
         mock_healthcheck()
         mock_screenshot()
 
@@ -306,8 +310,8 @@ class TestPercyScreenshot(unittest.TestCase):
         consider_element = Mock(spec=WebElement)
         consider_element.id = 'Consider_Dummy_id'
 
-        percy_screenshot(self.driver, 'Snapshot 1')
-        percy_screenshot(self.driver, 'Snapshot 2', options = {
+        percy_screenshot(driver, 'Snapshot 1')
+        percy_screenshot(driver, 'Snapshot 2', options = {
             "enable_javascript": True,
             "ignore_region_selenium_elements": [element],
             "consider_region_selenium_elements": [consider_element]
@@ -317,10 +321,10 @@ class TestPercyScreenshot(unittest.TestCase):
 
         s1 = httpretty.latest_requests()[1].parsed_body
         self.assertEqual(s1['snapshotName'], 'Snapshot 1')
-        self.assertEqual(s1['sessionId'], self.driver.session_id)
-        self.assertEqual(s1['commandExecutorUrl'], self.driver.command_executor._url) # pylint: disable=W0212
-        self.assertEqual(s1['capabilities'], dict(self.driver.capabilities))
-        self.assertEqual(s1['sessionCapabilites'], dict(self.driver.desired_capabilities))
+        self.assertEqual(s1['sessionId'], driver.session_id)
+        self.assertEqual(s1['commandExecutorUrl'], driver.command_executor._url) # pylint: disable=W0212
+        self.assertEqual(s1['capabilities'], dict(driver.capabilities))
+        self.assertEqual(s1['sessionCapabilites'], dict(driver.desired_capabilities))
         self.assertRegex(s1['client_info'], r'percy-selenium-python/\d+')
         self.assertRegex(s1['environment_info'][0], r'selenium/\d+')
         self.assertRegex(s1['environment_info'][1], r'python/\d+')
@@ -330,6 +334,14 @@ class TestPercyScreenshot(unittest.TestCase):
         self.assertEqual(s2['options']['enable_javascript'], True)
         self.assertEqual(s2['options']['ignore_region_elements'], ['Dummy_id'])
         self.assertEqual(s2['options']['consider_region_elements'], ['Consider_Dummy_id'])
+
+    def test_posts_screenshot_to_the_local_percy_server_remote_connection(self):
+        self.posts_screenshot_to_the_local_percy_server(self.driver)
+
+    def test_posts_screenshot_to_the_local_percy_server_safari_connection(self):
+        safari_driver = self.get_driver(WebDriver, SafariRemoteConnection)
+        self.posts_screenshot_to_the_local_percy_server(safari_driver)
+        safari_driver.quit()
 
     def test_handles_screenshot_errors(self):
         mock_healthcheck(session_type="automate")
