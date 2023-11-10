@@ -19,9 +19,9 @@ def percy_screenshot(driver, name, **kw):
     if driver.__class__.__name__ != "WebDriver":
         raise UnsupportedWebDriverException("Provided driver is not supported")
 
-    if driver.command_executor.__class__.__name__ == "RemoteConnection":
+    if "RemoteConnection" in driver.command_executor.__class__.__name__:
         percy_automate_screenshot(driver, name, **kw)
-    elif driver.command_executor.__class__.__name__ == "AppiumConnection":
+    elif "AppiumConnection" in driver.command_executor.__class__.__name__:
         try:
             from percy.screenshot import percy_screenshot # pylint: disable=W0621,C0415
             percy_screenshot(driver, name, **kw)
