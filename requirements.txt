@@ -1,2 +1,2 @@
-selenium>=3
+selenium>=4.15.1
 requests==2.*
