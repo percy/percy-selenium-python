@@ -79,13 +79,14 @@ def percy_snapshot(driver, name, **kwargs):
             'dom_snapshot': dom_snapshot,
             'url': driver.current_url,
             'name': name
-        }}, timeout=30)
+        }}, timeout=600)
 
         # Handle errors
         response.raise_for_status()
         data = response.json()
 
         if not data['success']: raise Exception(data['error'])
+        return data
     except Exception as e:
         print(f'{LABEL} Could not take DOM snapshot "{name}"')
         print(f'{LABEL} {e}')
@@ -134,13 +135,14 @@ def percy_automate_screenshot(driver, name, options = None, **kwargs):
             'sessionCapabilites': metadata.session_capabilities,
             'snapshotName': name,
             'options': options
-        }}, timeout=60)
+        }}, timeout=600)
 
         # Handle errors
         response.raise_for_status()
         data = response.json()
 
         if not data['success']: raise Exception(data['error'])
+        return data
     except Exception as e:
         print(f'{LABEL} Could not take Screenshot "{name}"')
         print(f'{LABEL} {e}')
