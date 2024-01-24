@@ -58,7 +58,7 @@ def fetch_percy_dom():
 # Take a DOM snapshot and post it to the snapshot endpoint
 def percy_snapshot(driver, name, **kwargs):
     session_type = is_percy_enabled()
-    if session_type is False: return # Since session_type can be None for old CLI version
+    if session_type is False: return None # Since session_type can be None for old CLI version
     if session_type == "automate": raise Exception("Invalid function call - "\
       "percy_snapshot(). Please use percy_screenshot() function while using Percy with Automate. "\
       "For more information on usage of PercyScreenshot, "\
@@ -79,21 +79,24 @@ def percy_snapshot(driver, name, **kwargs):
             'dom_snapshot': dom_snapshot,
             'url': driver.current_url,
             'name': name
-        }}, timeout=30)
+        }}, timeout=600)
 
         # Handle errors
         response.raise_for_status()
         data = response.json()
 
         if not data['success']: raise Exception(data['error'])
+        if not data["data"]: return None
+        return data["data"]
     except Exception as e:
         print(f'{LABEL} Could not take DOM snapshot "{name}"')
         print(f'{LABEL} {e}')
+        return None
 
 # Take screenshot on driver
 def percy_automate_screenshot(driver, name, options = None, **kwargs):
     session_type = is_percy_enabled()
-    if session_type is False: return # Since session_type can be None for old CLI version
+    if session_type is False: return None # Since session_type can be None for old CLI version
     if session_type == "web": raise Exception("Invalid function call - "\
       "percy_screenshot(). Please use percy_snapshot() function for taking screenshot. "\
       "percy_screenshot() should be used only while using Percy with Automate. "\
@@ -112,6 +115,9 @@ def percy_automate_screenshot(driver, name, options = None, **kwargs):
         if 'considerRegionSeleniumElements' in options:
             options['consider_region_selenium_elements'] = options['considerRegionSeleniumElements']
             options.pop('considerRegionSeleniumElements')
+
+        if 'sync' not in options:
+            options['sync'] = False
 
         ignore_region_elements = get_element_ids(
             options.get("ignore_region_selenium_elements", [])
@@ -134,16 +140,19 @@ def percy_automate_screenshot(driver, name, options = None, **kwargs):
             'sessionCapabilites': metadata.session_capabilities,
             'snapshotName': name,
             'options': options
-        }}, timeout=60)
+        }}, timeout=600)
 
         # Handle errors
         response.raise_for_status()
         data = response.json()
 
         if not data['success']: raise Exception(data['error'])
+        if not data['data']: return None
+        return data['data']
     except Exception as e:
         print(f'{LABEL} Could not take Screenshot "{name}"')
         print(f'{LABEL} {e}')
+        return None
 
 def get_element_ids(elements):
     return [element.id for element in elements]
