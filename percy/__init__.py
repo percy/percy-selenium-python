@@ -21,10 +21,11 @@ def percy_screenshot(driver, name, **kw):
 
     if "RemoteConnection" in driver.command_executor.__class__.__name__:
         return percy_automate_screenshot(driver, name, **kw)
-    elif "AppiumConnection" in driver.command_executor.__class__.__name__:
+    if "AppiumConnection" in driver.command_executor.__class__.__name__:
         try:
             from percy.screenshot import percy_screenshot # pylint: disable=W0621,C0415
             return percy_screenshot(driver, name, **kw)
         except ImportError as exc:
             raise ModuleNotFoundError("[percy] `percy-appium` package is not installed, "\
                 "please install it to use percy_screenshot command with appium") from exc
+    return None
