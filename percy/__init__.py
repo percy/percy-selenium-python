@@ -20,11 +20,11 @@ def percy_screenshot(driver, name, **kw):
         raise UnsupportedWebDriverException("Provided driver is not supported")
 
     if "RemoteConnection" in driver.command_executor.__class__.__name__:
-        percy_automate_screenshot(driver, name, **kw)
+        return percy_automate_screenshot(driver, name, **kw)
     elif "AppiumConnection" in driver.command_executor.__class__.__name__:
         try:
             from percy.screenshot import percy_screenshot # pylint: disable=W0621,C0415
-            percy_screenshot(driver, name, **kw)
+            return percy_screenshot(driver, name, **kw)
         except ImportError as exc:
             raise ModuleNotFoundError("[percy] `percy-appium` package is not installed, "\
                 "please install it to use percy_screenshot command with appium") from exc

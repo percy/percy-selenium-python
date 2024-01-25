@@ -116,9 +116,6 @@ def percy_automate_screenshot(driver, name, options = None, **kwargs):
             options['consider_region_selenium_elements'] = options['considerRegionSeleniumElements']
             options.pop('considerRegionSeleniumElements')
 
-        if 'sync' not in options:
-            options['sync'] = False
-
         ignore_region_elements = get_element_ids(
             options.get("ignore_region_selenium_elements", [])
         )

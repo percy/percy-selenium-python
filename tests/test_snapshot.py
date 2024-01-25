@@ -43,6 +43,10 @@ mock_server_thread = Thread(target=mock_server.serve_forever)
 mock_server_thread.daemon = True
 mock_server_thread.start()
 
+# initializing mock data
+data_object = {"sync": "true", "diff": 0}
+
+
 # mock helpers
 def mock_healthcheck(fail=False, fail_how='error', session_type=None):
     health_body = { "success": True }
@@ -71,16 +75,25 @@ def mock_healthcheck(fail=False, fail_how='error', session_type=None):
         body='window.PercyDOM = { serialize: () => document.documentElement.outerHTML };',
         status=200)
 
-def mock_snapshot(fail=False):
+def mock_snapshot(fail=False, data=False):
     httpretty.register_uri(
         httpretty.POST, 'http://localhost:5338/percy/snapshot',
-        body=('{ "success": ' + ('true' if not fail else 'false, "error": "test"') + '}'),
+        body = json.dumps({
+            "success": "false" if fail else "true",
+            "error": "test" if fail else None,
+            "data": data_object if data else None
+        }),
         status=(500 if fail else 200))
 
-def mock_screenshot(fail=False):
+def mock_screenshot(fail=False, data=False):
+
     httpretty.register_uri(
         httpretty.POST, 'http://localhost:5338/percy/automateScreenshot',
-        body=('{ "success": ' + ('true' if not fail else 'false, "error": "test"') + '}'),
+        body = json.dumps({
+            "success": not fail,
+            "error": "test" if fail else None,
+            "data": data_object if data else None
+        }),
         status=(500 if fail else 200))
 
 class TestPercySnapshot(unittest.TestCase):
@@ -154,7 +167,7 @@ class TestPercySnapshot(unittest.TestCase):
         mock_snapshot()
 
         percy_snapshot(self.driver, 'Snapshot 1')
-        percy_snapshot(self.driver, 'Snapshot 2', enable_javascript=True)
+        response = percy_snapshot(self.driver, 'Snapshot 2', enable_javascript=True)
 
         self.assertEqual(httpretty.last_request().path, '/percy/snapshot')
 
@@ -169,6 +182,30 @@ class TestPercySnapshot(unittest.TestCase):
         s2 = httpretty.latest_requests()[3].parsed_body
         self.assertEqual(s2['name'], 'Snapshot 2')
         self.assertEqual(s2['enable_javascript'], True)
+        self.assertEqual(response, None)
+
+    def test_posts_snapshots_to_the_local_percy_server_for_sync(self):
+        mock_healthcheck()
+        mock_snapshot(False, True)
+
+        percy_snapshot(self.driver, 'Snapshot 1')
+        response = percy_snapshot(self.driver, 'Snapshot 2', enable_javascript=True, sync=True)
+
+        self.assertEqual(httpretty.last_request().path, '/percy/snapshot')
+
+        s1 = httpretty.latest_requests()[2].parsed_body
+        self.assertEqual(s1['name'], 'Snapshot 1')
+        self.assertEqual(s1['url'], 'http://localhost:8000/')
+        self.assertEqual(s1['dom_snapshot'], '<html><head></head><body>Snapshot Me</body></html>')
+        self.assertRegex(s1['client_info'], r'percy-selenium-python/\d+')
+        self.assertRegex(s1['environment_info'][0], r'selenium/\d+')
+        self.assertRegex(s1['environment_info'][1], r'python/\d+')
+
+        s2 = httpretty.latest_requests()[3].parsed_body
+        self.assertEqual(s2['name'], 'Snapshot 2')
+        self.assertEqual(s2['enable_javascript'], True)
+        self.assertEqual(s2['sync'], True)
+        self.assertEqual(response, data_object)
 
     def test_has_a_backwards_compatible_function(self):
         mock_healthcheck()
@@ -283,22 +320,25 @@ class TestPercyScreenshot(unittest.TestCase):
 
     def test_camelcase_options(self):
         mock_healthcheck()
-        mock_screenshot()
+        mock_screenshot(False, True)
 
         element = Mock(spec=WebElement)
         element.id = 'Dummy_id'
 
         consider_element = Mock(spec=WebElement)
         consider_element.id = 'Consider_Dummy_id'
-        percy_screenshot(self.driver, 'Snapshot C', options = {
+        response = percy_screenshot(self.driver, 'Snapshot C', options = {
             "ignoreRegionSeleniumElements": [element],
-            "considerRegionSeleniumElements": [consider_element]
+            "considerRegionSeleniumElements": [consider_element],
+            "sync": "true"
         })
 
         s = httpretty.latest_requests()[1].parsed_body
         self.assertEqual(s['snapshotName'], 'Snapshot C')
         self.assertEqual(s['options']['ignore_region_elements'], ['Dummy_id'])
         self.assertEqual(s['options']['consider_region_elements'], ['Consider_Dummy_id'])
+        self.assertEqual(s['options']['sync'], "true")
+        self.assertEqual(response, data_object)
 
     def posts_screenshot_to_the_local_percy_server(self, driver):
         mock_healthcheck()
@@ -311,7 +351,7 @@ class TestPercyScreenshot(unittest.TestCase):
         consider_element.id = 'Consider_Dummy_id'
 
         percy_screenshot(driver, 'Snapshot 1')
-        percy_screenshot(driver, 'Snapshot 2', options = {
+        response = percy_screenshot(driver, 'Snapshot 2', options = {
             "enable_javascript": True,
             "ignore_region_selenium_elements": [element],
             "consider_region_selenium_elements": [consider_element]
@@ -334,6 +374,7 @@ class TestPercyScreenshot(unittest.TestCase):
         self.assertEqual(s2['options']['enable_javascript'], True)
         self.assertEqual(s2['options']['ignore_region_elements'], ['Dummy_id'])
         self.assertEqual(s2['options']['consider_region_elements'], ['Consider_Dummy_id'])
+        self.assertEqual(response, None)
 
     def test_posts_screenshot_to_the_local_percy_server_remote_connection(self):
         self.posts_screenshot_to_the_local_percy_server(self.driver)
