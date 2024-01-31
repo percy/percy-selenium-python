@@ -89,6 +89,7 @@ percy_screenshot(driver, name = 'Screenshot 1')
 - `driver` (**required**) - A Selenium driver instance
 - `name` (**required**) - The screenshot name; must be unique to each screenshot
 - `options` (**optional**) - There are various options supported by percy_screenshot to server further functionality.
+    - `sync` - Boolean value by default it falls back to `false`, Gives the processed result around screenshot [From CLI v1.28.0-beta.0+]
     - `full_page` - Boolean value by default it falls back to `false`, Takes full page screenshot [From CLI v1.27.6+]
     - `freeze_animated_image` - Boolean value by default it falls back to `false`, you can pass `true` and percy will freeze image based animations.
     - `freeze_image_by_selectors` -List of selectors. Images will be freezed which are passed using selectors. For this to work `freeze_animated_image` must be set to true.
