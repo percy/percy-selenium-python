@@ -143,7 +143,7 @@ def percy_automate_screenshot(driver, name, options = None, **kwargs):
         data = response.json()
 
         if not data['success']: raise Exception(data['error'])
-        return data.get("data", None) 
+        return data.get("data", None)
     except Exception as e:
         print(f'{LABEL} Could not take Screenshot "{name}"')
         print(f'{LABEL} {e}')
