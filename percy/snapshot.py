@@ -86,8 +86,7 @@ def percy_snapshot(driver, name, **kwargs):
         data = response.json()
 
         if not data['success']: raise Exception(data['error'])
-        if not data["data"]: return None
-        return data["data"]
+        return data.get("data", None)
     except Exception as e:
         print(f'{LABEL} Could not take DOM snapshot "{name}"')
         print(f'{LABEL} {e}')
@@ -144,8 +143,7 @@ def percy_automate_screenshot(driver, name, options = None, **kwargs):
         data = response.json()
 
         if not data['success']: raise Exception(data['error'])
-        if not data['data']: return None
-        return data['data']
+        return data.get("data", None)
     except Exception as e:
         print(f'{LABEL} Could not take Screenshot "{name}"')
         print(f'{LABEL} {e}')
