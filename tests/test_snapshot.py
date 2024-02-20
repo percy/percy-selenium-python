@@ -319,7 +319,7 @@ class TestPercyScreenshot(unittest.TestCase):
             percy_screenshot("dummy_driver", 'Snapshot 1')
 
     def test_camelcase_options(self):
-        mock_healthcheck()
+        mock_healthcheck(session_type="automate")
         mock_screenshot(False, True)
 
         element = Mock(spec=WebElement)
