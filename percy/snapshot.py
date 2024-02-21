@@ -96,7 +96,7 @@ def percy_snapshot(driver, name, **kwargs):
 def percy_automate_screenshot(driver, name, options = None, **kwargs):
     session_type = is_percy_enabled()
     if session_type is False: return None # Since session_type can be None for old CLI version
-    if session_type == "web": raise Exception("Invalid function call - "\
+    if session_type != "automate": raise Exception("Invalid function call - "\
       "percy_screenshot(). Please use percy_snapshot() function for taking screenshot. "\
       "percy_screenshot() should be used only while using Percy with Automate. "\
       "For more information on usage of percy_snapshot(), "\
