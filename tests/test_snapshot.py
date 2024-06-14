@@ -237,8 +237,8 @@ class TestPercySnapshot(unittest.TestCase):
 
         self.assertEqual("Invalid function call - "\
         "percy_snapshot(). Please use percy_screenshot() function while using Percy with Automate."\
-        " For more information on usage of PercyScreenshot, refer https://www.browserstack.com/docs"\
-        "/percy/integrate/functional-and-visual", str(context.exception))
+        " For more information on usage of PercyScreenshot, refer https://www.browserstack.com"\
+        "/docs/percy/integrate/functional-and-visual", str(context.exception))
 
 class TestPercyScreenshot(unittest.TestCase):
     @classmethod
