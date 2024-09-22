@@ -7,6 +7,7 @@ import requests
 from selenium.webdriver import __version__ as SELENIUM_VERSION
 from percy.version import __version__ as SDK_VERSION
 from percy.driver_metadata import DriverMetaData
+from time import sleep
 
 # Collect client and environment information
 CLIENT_INFO = 'percy-selenium-python/' + SDK_VERSION
@@ -18,6 +19,12 @@ PERCY_DEBUG = os.environ.get('PERCY_LOGLEVEL') == 'debug'
 
 # for logging
 LABEL = '[\u001b[35m' + ('percy:python' if PERCY_DEBUG else 'percy') + '\u001b[39m]'
+CDP_SUPPORT_SELENIUM = (str(SELENIUM_VERSION)[0].isdigit() and int(str(SELENIUM_VERSION)[0]) >= 4) if SELENIUM_VERSION else False
+fetched_widths = {}
+
+def log(message, lvl = 'info'):
+    requests.post(f'{PERCY_CLI_API}/percy/log', json={ 'message': message, 'level': lvl }, timeout=30)
+    print(message)
 
 # Check if Percy is enabled, caching the result so it is only checked once
 @lru_cache(maxsize=None)
@@ -27,6 +34,8 @@ def is_percy_enabled():
         response.raise_for_status()
         data = response.json()
         session_type =  data.get('type', None)
+        global fetched_widths
+        fetched_widths = data.get('widths', {})
 
         if not data['success']: raise Exception(data['error'])
         version = response.headers.get('x-percy-core-version')
@@ -55,6 +64,45 @@ def fetch_percy_dom():
     response.raise_for_status()
     return response.text
 
+@lru_cache(maxsize=None)
+def get_widths_for_multi_dom(widths):
+    global fetched_widths
+    # Deep copy mobile widths otherwise it will get overridden
+    allWidths = fetched_widths.get('mobile', [])[:]
+    if widths and len(widths) != 0:
+        allWidths.extend(widths)
+    else:
+        allWidths.extend(fetched_widths.get('config', []))
+    return list(set(allWidths))
+
+def change_window_dimension(driver, width, height):
+    if CDP_SUPPORT_SELENIUM and driver.capabilities['browserName'] == 'chrome':
+        driver.execute_cdp_cmd('Emulation.setDeviceMetricsOverride', { 'height': height, 'width': width, 'deviceScaleFactor': 1, 'mobile': False })
+    else:
+        driver.set_window_size(width, height)
+
+def capture_responsive_dom(driver, cookies, **kwargs):
+    widths = kwargs.get('widths') or []
+    if 'width' in kwargs:
+        widths = [kwargs.get('width')]
+
+    # cache doesn't work when parameter is a list so passing tuple
+    widths = get_widths_for_multi_dom(tuple(widths))
+    dom_snapshots = []
+    window_size = driver.get_window_size()
+    current_width, current_height = window_size['width'], window_size['height']
+
+    for width in widths:
+        change_window_dimension(driver, width, current_height)
+        sleep(1)
+        dom_snapshot = driver.execute_script(f'return PercyDOM.serialize({json.dumps(kwargs)})')
+        dom_snapshot['cookies'] = cookies
+        dom_snapshot['width'] = width
+        dom_snapshots.append(dom_snapshot)
+
+    change_window_dimension(driver, current_width, current_height)
+    return dom_snapshots
+
 # Take a DOM snapshot and post it to the snapshot endpoint
 def percy_snapshot(driver, name, **kwargs):
     session_type = is_percy_enabled()
@@ -68,14 +116,20 @@ def percy_snapshot(driver, name, **kwargs):
     try:
         # Inject the DOM serialization script
         driver.execute_script(fetch_percy_dom())
+        cookies = driver.get_cookies()
+        user_agent = driver.execute_script("return navigator.userAgent;")
 
         # Serialize and capture the DOM
-        dom_snapshot = driver.execute_script(f'return PercyDOM.serialize({json.dumps(kwargs)})')
+        if kwargs.get('responsive_snapshot_capture', False) or kwargs.get('responsiveSnapshotCapture', False):
+            dom_snapshot = capture_responsive_dom(driver, cookies, **kwargs)
+        else:
+            dom_snapshot = driver.execute_script(f'return PercyDOM.serialize({json.dumps(kwargs)})')
+            dom_snapshot['cookies'] = cookies
 
         # Post the DOM to the snapshot endpoint with snapshot options and other info
         response = requests.post(f'{PERCY_CLI_API}/percy/snapshot', json={**kwargs, **{
             'client_info': CLIENT_INFO,
-            'environment_info': ENV_INFO,
+            'environment_info': ENV_INFO + [user_agent],
             'dom_snapshot': dom_snapshot,
             'url': driver.current_url,
             'name': name
@@ -88,8 +142,8 @@ def percy_snapshot(driver, name, **kwargs):
         if not data['success']: raise Exception(data['error'])
         return data.get("data", None)
     except Exception as e:
-        print(f'{LABEL} Could not take DOM snapshot "{name}"')
-        print(f'{LABEL} {e}')
+        log(f'{LABEL} Could not take DOM snapshot "{name}"')
+        log(f'{LABEL} {e}')
         return None
 
 # Take screenshot on driver
@@ -145,8 +199,8 @@ def percy_automate_screenshot(driver, name, options = None, **kwargs):
         if not data['success']: raise Exception(data['error'])
         return data.get("data", None)
     except Exception as e:
-        print(f'{LABEL} Could not take Screenshot "{name}"')
-        print(f'{LABEL} {e}')
+        log(f'{LABEL} Could not take Screenshot "{name}"')
+        log(f'{LABEL} {e}')
         return None
 
 def get_element_ids(elements):
