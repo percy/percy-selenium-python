@@ -27,8 +27,8 @@ def log(message, lvl = 'info'):
     try:
         requests.post(f'{PERCY_CLI_API}/percy/log',
                     json={'message': message, 'level': lvl}, timeout=1)
-    except:
-        if PERCY_DEBUG: print('Sending log to CLI Failed')
+    except Exception as e:
+        if PERCY_DEBUG: print(f'Sending log to CLI Failed {e}')
     finally:
         print(message)
 
