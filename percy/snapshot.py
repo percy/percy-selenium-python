@@ -21,12 +21,16 @@ PERCY_DEBUG = os.environ.get('PERCY_LOGLEVEL') == 'debug'
 LABEL = '[\u001b[35m' + ('percy:python' if PERCY_DEBUG else 'percy') + '\u001b[39m]'
 CDP_SUPPORT_SELENIUM = (str(SELENIUM_VERSION)[0].isdigit() and int(
     str(SELENIUM_VERSION)[0]) >= 4) if SELENIUM_VERSION else False
-fetched_widths = {}
+eligible_widths = {}
 
 def log(message, lvl = 'info'):
-    requests.post(f'{PERCY_CLI_API}/percy/log',
-                  json={'message': message, 'level': lvl}, timeout=30)
-    print(message)
+    try:
+        requests.post(f'{PERCY_CLI_API}/percy/log',
+                    json={'message': message, 'level': lvl}, timeout=1)
+    except:
+        if PERCY_DEBUG: print('Sending log to CLI Failed')
+    finally:
+        print(message)
 
 # Check if Percy is enabled, caching the result so it is only checked once
 @lru_cache(maxsize=None)
@@ -36,8 +40,8 @@ def is_percy_enabled():
         response.raise_for_status()
         data = response.json()
         session_type =  data.get('type', None)
-        global fetched_widths
-        fetched_widths = data.get('widths', {})
+        global eligible_widths
+        eligible_widths = data.get('widths', {})
 
         if not data['success']: raise Exception(data['error'])
         version = response.headers.get('x-percy-core-version')
@@ -66,14 +70,23 @@ def fetch_percy_dom():
     response.raise_for_status()
     return response.text
 
+def get_serialized_dom(driver, cookies, **kwargs):
+    dom_snapshot = driver.execute_script(f'return PercyDOM.serialize({json.dumps(kwargs)})')
+    dom_snapshot['cookies'] = cookies
+    return dom_snapshot
+
 @lru_cache(maxsize=None)
-def get_widths_for_multi_dom(widths):
+def get_widths_for_multi_dom(width, widths):
+    user_passed_widths = []
+    if len(widths) != 0: user_passed_widths = widths
+    if width: user_passed_widths = [width]
+
     # Deep copy mobile widths otherwise it will get overridden
-    allWidths = fetched_widths.get('mobile', [])[:]
-    if widths and len(widths) != 0:
-        allWidths.extend(widths)
+    allWidths = eligible_widths.get('mobile', [])[:]
+    if len(user_passed_widths) != 0:
+        allWidths.extend(user_passed_widths)
     else:
-        allWidths.extend(fetched_widths.get('config', []))
+        allWidths.extend(eligible_widths.get('config', []))
     return list(set(allWidths))
 
 def change_window_dimension(driver, width, height):
@@ -84,12 +97,8 @@ def change_window_dimension(driver, width, height):
         driver.set_window_size(width, height)
 
 def capture_responsive_dom(driver, cookies, **kwargs):
-    widths = kwargs.get('widths') or []
-    if 'width' in kwargs:
-        widths = [kwargs.get('width')]
-
     # cache doesn't work when parameter is a list so passing tuple
-    widths = get_widths_for_multi_dom(tuple(widths))
+    widths = get_widths_for_multi_dom(kwargs.get('width'), tuple(kwargs.get('widths') or []))
     dom_snapshots = []
     window_size = driver.get_window_size()
     current_width, current_height = window_size['width'], window_size['height']
@@ -97,8 +106,7 @@ def capture_responsive_dom(driver, cookies, **kwargs):
     for width in widths:
         change_window_dimension(driver, width, current_height)
         sleep(1)
-        dom_snapshot = driver.execute_script(f'return PercyDOM.serialize({json.dumps(kwargs)})')
-        dom_snapshot['cookies'] = cookies
+        dom_snapshot = get_serialized_dom(driver, cookies, **kwargs)
         dom_snapshot['width'] = width
         dom_snapshots.append(dom_snapshot)
 
@@ -118,20 +126,18 @@ def percy_snapshot(driver, name, **kwargs):
         # Inject the DOM serialization script
         driver.execute_script(fetch_percy_dom())
         cookies = driver.get_cookies()
-        user_agent = driver.execute_script("return navigator.userAgent;")
 
         # Serialize and capture the DOM
         if kwargs.get('responsive_snapshot_capture', False) or kwargs.get(
             'responsiveSnapshotCapture', False):
             dom_snapshot = capture_responsive_dom(driver, cookies, **kwargs)
         else:
-            dom_snapshot = driver.execute_script(f'return PercyDOM.serialize({json.dumps(kwargs)})')
-            dom_snapshot['cookies'] = cookies
+            dom_snapshot = get_serialized_dom(driver, cookies, **kwargs)
 
         # Post the DOM to the snapshot endpoint with snapshot options and other info
         response = requests.post(f'{PERCY_CLI_API}/percy/snapshot', json={**kwargs, **{
             'client_info': CLIENT_INFO,
-            'environment_info': ENV_INFO + [user_agent],
+            'environment_info': ENV_INFO,
             'dom_snapshot': dom_snapshot,
             'url': driver.current_url,
             'name': name

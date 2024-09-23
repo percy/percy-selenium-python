@@ -192,7 +192,6 @@ class TestPercySnapshot(unittest.TestCase):
         self.assertRegex(s1['client_info'], r'percy-selenium-python/\d+')
         self.assertRegex(s1['environment_info'][0], r'selenium/\d+')
         self.assertRegex(s1['environment_info'][1], r'python/\d+')
-        self.assertRegex(s1['environment_info'][2], r'Mozilla/\d+')
 
         s2 = httpretty.latest_requests()[3].parsed_body
         self.assertEqual(s2['name'], 'Snapshot 2')
@@ -268,7 +267,7 @@ class TestPercySnapshot(unittest.TestCase):
     def test_posts_snapshots_to_the_local_percy_server_for_responsive_dom_chrome(self, MockChrome):
         driver = MockChrome.return_value
         driver.execute_script.side_effect = [
-            '', '', { 'html': 'some_dom' }, { 'html': 'some_dom_1' }
+            '', { 'html': 'some_dom' }, { 'html': 'some_dom_1' }
         ]
         driver.get_cookies.return_value = ''
         driver.execute_cdp_cmd.return_value = ''
