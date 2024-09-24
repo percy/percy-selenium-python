@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import patch, Mock
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -265,9 +266,10 @@ class TestPercySnapshot(unittest.TestCase):
 
     @patch('selenium.webdriver.Chrome')
     def test_posts_snapshots_to_the_local_percy_server_for_responsive_dom_chrome(self, MockChrome):
+        os.environ['RESONSIVE_CAPTURE_SLEEP_TIME'] = '1'
         driver = MockChrome.return_value
         driver.execute_script.side_effect = [
-            '', { 'html': 'some_dom' }, { 'html': 'some_dom_1' }
+            '', '', 1, { 'html': 'some_dom' }, 2, { 'html': 'some_dom_1' }, 3
         ]
         driver.get_cookies.return_value = ''
         driver.execute_cdp_cmd.return_value = ''
@@ -289,7 +291,6 @@ class TestPercySnapshot(unittest.TestCase):
         self.assertEqual(s1['name'], 'Snapshot 1')
         self.assertEqual(s1['url'], 'http://localhost:8000/')
         self.assertEqual(s1['dom_snapshot'], expected_dom_snapshot)
-
 
     def test_has_a_backwards_compatible_function(self):
         mock_healthcheck()

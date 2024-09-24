@@ -6,6 +6,8 @@ from time import sleep
 import requests
 
 from selenium.webdriver import __version__ as SELENIUM_VERSION
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.support.ui import WebDriverWait
 from percy.version import __version__ as SDK_VERSION
 from percy.driver_metadata import DriverMetaData
 
@@ -16,6 +18,7 @@ ENV_INFO = ['selenium/' + SELENIUM_VERSION, 'python/' + platform.python_version(
 # Maybe get the CLI API address from the environment
 PERCY_CLI_API = os.environ.get('PERCY_CLI_API') or 'http://localhost:5338'
 PERCY_DEBUG = os.environ.get('PERCY_LOGLEVEL') == 'debug'
+RESONSIVE_CAPTURE_SLEEP_TIME = os.environ.get('RESONSIVE_CAPTURE_SLEEP_TIME')
 
 # for logging
 LABEL = '[\u001b[35m' + ('percy:python' if PERCY_DEBUG else 'percy') + '\u001b[39m]'
@@ -89,12 +92,20 @@ def get_widths_for_multi_dom(width, widths):
         allWidths.extend(eligible_widths.get('config', []))
     return list(set(allWidths))
 
-def change_window_dimension(driver, width, height):
+def change_window_dimension_and_wait(driver, width, height, resizeCount):
     if CDP_SUPPORT_SELENIUM and driver.capabilities['browserName'] == 'chrome':
         driver.execute_cdp_cmd('Emulation.setDeviceMetricsOverride', { 'height': height,
                                'width': width, 'deviceScaleFactor': 1, 'mobile': False })
     else:
         driver.set_window_size(width, height)
+
+    try:
+        WebDriverWait(driver, 2).until(
+            lambda driver: driver.execute_script("return window.resizeCount") == resizeCount
+        )
+    except TimeoutException:
+        if PERCY_DEBUG: log(f"Timed out waiting for window resize event for width {width}")
+
 
 def capture_responsive_dom(driver, cookies, **kwargs):
     # cache doesn't work when parameter is a list so passing tuple
@@ -102,15 +113,27 @@ def capture_responsive_dom(driver, cookies, **kwargs):
     dom_snapshots = []
     window_size = driver.get_window_size()
     current_width, current_height = window_size['width'], window_size['height']
+    resize_count = 0
+    driver.execute_script("""
+        // if window resizeCount present means event listener was already present
+        if (!window.resizeCount) {
+            window.addEventListener('resize', () => {
+                window.resizeCount++;
+            })
+        }
+        // always reset count 0
+        window.resizeCount = 0
+    """)
 
     for width in widths:
-        change_window_dimension(driver, width, current_height)
-        sleep(1)
+        resize_count += 1
+        change_window_dimension_and_wait(driver, width, current_height, resize_count)
+        if RESONSIVE_CAPTURE_SLEEP_TIME: sleep(int(RESONSIVE_CAPTURE_SLEEP_TIME))
         dom_snapshot = get_serialized_dom(driver, cookies, **kwargs)
         dom_snapshot['width'] = width
         dom_snapshots.append(dom_snapshot)
 
-    change_window_dimension(driver, current_width, current_height)
+    change_window_dimension_and_wait(driver, current_width, current_height, resize_count + 1)
     return dom_snapshots
 
 # Take a DOM snapshot and post it to the snapshot endpoint
