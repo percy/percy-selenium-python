@@ -33,9 +33,9 @@ def log(message, lvl = 'info'):
     except Exception as e:
         if PERCY_DEBUG: print(f'Sending log to CLI Failed {e}')
     finally:
-        # Do not log on console if percy_debug is not true
-        if lvl == 'debug' and not PERCY_DEBUG: return
-        print(message)
+        # Only log if lvl is 'debug' and PERCY_DEBUG is True
+        if lvl != 'debug' or PERCY_DEBUG:
+            print(message)
 
 # Check if Percy is enabled, caching the result so it is only checked once
 @lru_cache(maxsize=None)
@@ -101,8 +101,8 @@ def change_window_dimension_and_wait(driver, width, height, resizeCount):
                                 'width': width, 'deviceScaleFactor': 1, 'mobile': False })
         else:
             driver.set_window_size(width, height)
-    except:
-        log(f'Resizing using cdp failed falling back driver for width {width}', 'debug')
+    except Exception as e:
+        log(f'Resizing using cdp failed falling back driver for width {width} {e}', 'debug')
         driver.set_window_size(width, height)
 
     try:
