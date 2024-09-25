@@ -27,6 +27,7 @@ CDP_SUPPORT_SELENIUM = (str(SELENIUM_VERSION)[0].isdigit() and int(
 eligible_widths = {}
 
 def log(message, lvl = 'info'):
+    message = f'{LABEL} {message}'
     try:
         requests.post(f'{PERCY_CLI_API}/percy/log',
                     json={'message': message, 'level': lvl}, timeout=1)
@@ -186,8 +187,8 @@ def percy_snapshot(driver, name, **kwargs):
         if not data['success']: raise Exception(data['error'])
         return data.get("data", None)
     except Exception as e:
-        log(f'{LABEL} Could not take DOM snapshot "{name}"')
-        log(f'{LABEL} {e}')
+        log(f'Could not take DOM snapshot "{name}"')
+        log(f'{e}')
         return None
 
 # Take screenshot on driver
@@ -243,8 +244,8 @@ def percy_automate_screenshot(driver, name, options = None, **kwargs):
         if not data['success']: raise Exception(data['error'])
         return data.get("data", None)
     except Exception as e:
-        log(f'{LABEL} Could not take Screenshot "{name}"')
-        log(f'{LABEL} {e}')
+        log(f'Could not take Screenshot "{name}"')
+        log(f'{e}')
         return None
 
 def get_element_ids(elements):
