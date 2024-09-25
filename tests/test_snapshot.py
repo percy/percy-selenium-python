@@ -224,6 +224,7 @@ class TestPercySnapshot(unittest.TestCase):
         self.assertEqual(response, data_object)
 
     def test_posts_snapshots_to_the_local_percy_server_for_responsive_snapshot_capture(self):
+        mock_logger()
         mock_healthcheck(widths = { "config": [375, 1280], "mobile": [390]})
         mock_snapshot()
         dom_string = '<html><head></head><body>Snapshot Me</body></html>'
@@ -235,14 +236,19 @@ class TestPercySnapshot(unittest.TestCase):
             { 'cookies': expected_cookies, 'html': dom_string, 'width': 390 },
             { 'cookies': expected_cookies, 'html': dom_string, 'width': 375 }
         ]
+        window_size = self.driver.get_window_size()
 
         percy_snapshot(self.driver, 'Snapshot 1', responsiveSnapshotCapture = True)
         percy_snapshot(self.driver, 'Snapshot 2', responsive_snapshot_capture=True, widths=[765])
         percy_snapshot(self.driver, 'Snapshot 3', responsive_snapshot_capture = True, width = 820)
 
+        new_window_size = self.driver.get_window_size()
+        self.assertEqual(window_size['width'], new_window_size['width'])
+        self.assertEqual(window_size['height'], new_window_size['height'])
+
         self.assertEqual(httpretty.last_request().path, '/percy/snapshot')
 
-        s1 = httpretty.latest_requests()[2].parsed_body
+        s1 = httpretty.latest_requests()[4].parsed_body
         self.assertEqual(s1['name'], 'Snapshot 1')
         self.assertEqual(s1['url'], 'http://localhost:8000/')
         self.assertEqual(s1['dom_snapshot'], expected_dom_snapshot)
@@ -250,14 +256,14 @@ class TestPercySnapshot(unittest.TestCase):
         self.assertRegex(s1['environment_info'][0], r'selenium/\d+')
         self.assertRegex(s1['environment_info'][1], r'python/\d+')
 
-        s2 = httpretty.latest_requests()[3].parsed_body
+        s2 = httpretty.latest_requests()[5].parsed_body
         self.assertEqual(s2['name'], 'Snapshot 2')
         self.assertEqual(s2['dom_snapshot'], [
             { 'cookies': expected_cookies, 'html': dom_string, 'width': 765 },
             { 'html': dom_string, 'cookies': expected_cookies, 'width': 390 }
         ])
 
-        s3 = httpretty.latest_requests()[4].parsed_body
+        s3 = httpretty.latest_requests()[6].parsed_body
         self.assertEqual(s3['name'], 'Snapshot 3')
         self.assertEqual(s3['dom_snapshot'], [
             { 'cookies': expected_cookies, 'html': dom_string, 'width': 820 },
