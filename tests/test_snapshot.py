@@ -49,7 +49,7 @@ data_object = {"sync": "true", "diff": 0}
 
 
 # mock helpers
-def mock_healthcheck(fail=False, fail_how='error', session_type=None, widths = None):
+def mock_healthcheck(fail=False, fail_how='error', session_type=None, widths=None, config=None):
     health_body = { "success": True }
     health_headers = { 'X-Percy-Core-Version': '1.0.0' }
     health_status = 200
@@ -66,6 +66,7 @@ def mock_healthcheck(fail=False, fail_how='error', session_type=None, widths = N
         health_body["type"] = session_type
 
     if widths: health_body['widths'] = widths
+    if config: health_body['config'] = config
     health_body = json.dumps(health_body)
     httpretty.register_uri(
         httpretty.GET, 'http://localhost:5338/percy/healthcheck',
@@ -272,6 +273,23 @@ class TestPercySnapshot(unittest.TestCase):
             { 'html': dom_string, 'cookies': expected_cookies, 'width': 390 }
         ])
 
+    def test_posts_snapshots_to_the_local_percy_server_with_defer_and_responsive(self):
+        mock_logger()
+        mock_healthcheck(widths = { "config": [375, 1280], "mobile": [390]}, config = { 'percy': { 'deferUploads': True }})
+        mock_snapshot()
+        dom_string = '<html><head></head><body>Snapshot Me</body></html>'
+        expected_dom_snapshot = { 'html': dom_string, 'cookies': [] }
+
+        percy_snapshot(self.driver, 'Snapshot 1', responsiveSnapshotCapture = True)
+
+        self.assertEqual(httpretty.last_request().path, '/percy/snapshot')
+
+        s1 = httpretty.latest_requests()[2].parsed_body
+        self.assertEqual(s1['name'], 'Snapshot 1')
+        self.assertEqual(s1['url'], 'http://localhost:8000/')
+        self.assertEqual(s1['dom_snapshot'], expected_dom_snapshot)
+
+
     @patch('selenium.webdriver.Chrome')
     def test_posts_snapshots_to_the_local_percy_server_for_responsive_dom_chrome(self, MockChrome):
         os.environ['RESONSIVE_CAPTURE_SLEEP_TIME'] = '1'
@@ -282,7 +300,7 @@ class TestPercySnapshot(unittest.TestCase):
         driver.get_cookies.return_value = ''
         driver.execute_cdp_cmd.return_value = ''
         driver.get_window_size.return_value = { 'height': 400, 'width': 800 }
-        mock_healthcheck(widths = { "config": [375], "mobile": [390]})
+        mock_healthcheck(widths = { "config": [375], "mobile": [390] })
         mock_snapshot()
         expected_dom_snapshot = [
             { 'cookies': '', 'html': 'some_dom', 'width': 600 },

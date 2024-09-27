@@ -140,6 +140,9 @@ def capture_responsive_dom(driver, eligible_widths, cookies, **kwargs):
     return dom_snapshots
 
 def is_responsive_snapshot_capture(config, **kwargs):
+    # Don't run resposive snapshot capture when defer uploads is enabled
+    if 'percy' in config and config['percy'].get('deferUploads', False): return False
+
     return kwargs.get('responsive_snapshot_capture', False) or kwargs.get(
             'responsiveSnapshotCapture', False) or (
                 'snapshot' in config and config['snapshot'].get('responsiveSnapshotCapture'))
