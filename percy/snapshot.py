@@ -24,7 +24,6 @@ RESONSIVE_CAPTURE_SLEEP_TIME = os.environ.get('RESONSIVE_CAPTURE_SLEEP_TIME')
 LABEL = '[\u001b[35m' + ('percy:python' if PERCY_DEBUG else 'percy') + '\u001b[39m]'
 CDP_SUPPORT_SELENIUM = (str(SELENIUM_VERSION)[0].isdigit() and int(
     str(SELENIUM_VERSION)[0]) >= 4) if SELENIUM_VERSION else False
-eligible_widths = {}
 
 def log(message, lvl = 'info'):
     message = f'{LABEL} {message}'
@@ -46,8 +45,8 @@ def is_percy_enabled():
         response.raise_for_status()
         data = response.json()
         session_type =  data.get('type', None)
-        global eligible_widths
-        eligible_widths = data.get('widths', {})
+        widths = data.get('widths', {})
+        config = data.get('config', {})
 
         if not data['success']: raise Exception(data['error'])
         version = response.headers.get('x-percy-core-version')
@@ -63,7 +62,11 @@ def is_percy_enabled():
             print(f'{LABEL} Unsupported Percy CLI version, {version}')
             return False
 
-        return session_type
+        return {
+            'session_type': session_type,
+            'config': config,
+            'widths': widths
+        }
     except Exception as e:
         print(f'{LABEL} Percy is not running, disabling snapshots')
         if PERCY_DEBUG: print(f'{LABEL} {e}')
@@ -81,10 +84,9 @@ def get_serialized_dom(driver, cookies, **kwargs):
     dom_snapshot['cookies'] = cookies
     return dom_snapshot
 
-@lru_cache(maxsize=None)
-def get_widths_for_multi_dom(width, widths):
-    user_passed_widths = []
-    if len(widths) != 0: user_passed_widths = widths
+def get_widths_for_multi_dom(eligible_widths, **kwargs):
+    user_passed_widths = kwargs.get('widths', [])
+    width = kwargs.get('width')
     if width: user_passed_widths = [width]
 
     # Deep copy mobile widths otherwise it will get overridden
@@ -114,27 +116,14 @@ def change_window_dimension_and_wait(driver, width, height, resizeCount):
         log(f"Timed out waiting for window resize event for width {width}", 'debug')
 
 
-def capture_responsive_dom(driver, cookies, **kwargs):
-    # cache doesn't work when parameter is a list so passing tuple
-    widths = get_widths_for_multi_dom(kwargs.get('width'), tuple(kwargs.get('widths') or []))
+def capture_responsive_dom(driver, eligible_widths, cookies, **kwargs):
+    widths = get_widths_for_multi_dom(eligible_widths, **kwargs)
     dom_snapshots = []
     window_size = driver.get_window_size()
     current_width, current_height = window_size['width'], window_size['height']
     last_window_width = current_width
     resize_count = 0
-    driver.execute_script("""
-        // if window resizeCount present means event listener was already present
-        if (!window.resizeCount) {
-            let resizeTimeout = false;
-            window.addEventListener('resize', () => {
-                if (resizeTimeout != false)
-                    clearTimeout(resizeTimeout)
-                resizeTimeout = setTimeout(() => window.resizeCount++, 100);
-            })
-        }
-        // always reset count 0
-        window.resizeCount = 0
-    """)
+    driver.execute_script("PercyDOM.waitForResize()")
 
     for width in widths:
         if last_window_width != width:
@@ -150,11 +139,17 @@ def capture_responsive_dom(driver, cookies, **kwargs):
     change_window_dimension_and_wait(driver, current_width, current_height, resize_count + 1)
     return dom_snapshots
 
+def is_responsive_snapshot_capture(config, **kwargs):
+    return kwargs.get('responsive_snapshot_capture', False) or kwargs.get(
+            'responsiveSnapshotCapture', False) or (
+                'snapshot' in config and config['snapshot'].get('responsiveSnapshotCapture'))
+
 # Take a DOM snapshot and post it to the snapshot endpoint
 def percy_snapshot(driver, name, **kwargs):
-    session_type = is_percy_enabled()
-    if session_type is False: return None # Since session_type can be None for old CLI version
-    if session_type == "automate": raise Exception("Invalid function call - "\
+    data = is_percy_enabled()
+    if not data: return None
+
+    if data['session_type'] == "automate": raise Exception("Invalid function call - "\
       "percy_snapshot(). Please use percy_screenshot() function while using Percy with Automate. "\
       "For more information on usage of PercyScreenshot, "\
       "refer https://www.browserstack.com/docs/percy/integrate/functional-and-visual")
@@ -165,9 +160,8 @@ def percy_snapshot(driver, name, **kwargs):
         cookies = driver.get_cookies()
 
         # Serialize and capture the DOM
-        if kwargs.get('responsive_snapshot_capture', False) or kwargs.get(
-            'responsiveSnapshotCapture', False):
-            dom_snapshot = capture_responsive_dom(driver, cookies, **kwargs)
+        if is_responsive_snapshot_capture(data['config'], **kwargs):
+            dom_snapshot = capture_responsive_dom(driver, data['widths'], cookies, **kwargs)
         else:
             dom_snapshot = get_serialized_dom(driver, cookies, **kwargs)
 
@@ -193,9 +187,10 @@ def percy_snapshot(driver, name, **kwargs):
 
 # Take screenshot on driver
 def percy_automate_screenshot(driver, name, options = None, **kwargs):
-    session_type = is_percy_enabled()
-    if session_type is False: return None # Since session_type can be None for old CLI version
-    if session_type != "automate": raise Exception("Invalid function call - "\
+    data = is_percy_enabled()
+    if not data: return None
+
+    if data['session_type'] != "automate": raise Exception("Invalid function call - "\
       "percy_screenshot(). Please use percy_snapshot() function for taking screenshot. "\
       "percy_screenshot() should be used only while using Percy with Automate. "\
       "For more information on usage of percy_snapshot(), "\

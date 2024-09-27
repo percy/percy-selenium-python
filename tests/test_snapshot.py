@@ -75,7 +75,9 @@ def mock_healthcheck(fail=False, fail_how='error', session_type=None, widths = N
     httpretty.register_uri(
         httpretty.GET, 'http://localhost:5338/percy/dom.js',
         body='window.PercyDOM = \
-         { serialize: () => { return { html: document.documentElement.outerHTML } } };',
+         { serialize: () => { return { html: document.documentElement.outerHTML } }, \
+           waitForResize: () => { if(!window.resizeCount) { window.addEventListener(\'resize\',\
+             () => window.resizeCount++) } window.resizeCount = 0; }}',
         status=200)
 
 def mock_snapshot(fail=False, data=False):
