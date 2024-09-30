@@ -275,7 +275,8 @@ class TestPercySnapshot(unittest.TestCase):
 
     def test_posts_snapshots_to_the_local_percy_server_with_defer_and_responsive(self):
         mock_logger()
-        mock_healthcheck(widths = { "config": [375, 1280], "mobile": [390]}, config = { 'percy': { 'deferUploads': True }})
+        mock_healthcheck(widths = { "config": [375, 1280], "mobile": [390]},
+                         config = { 'percy': { 'deferUploads': True }})
         mock_snapshot()
         dom_string = '<html><head></head><body>Snapshot Me</body></html>'
         expected_dom_snapshot = { 'html': dom_string, 'cookies': [] }
