@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import patch, Mock
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -48,7 +49,7 @@ data_object = {"sync": "true", "diff": 0}
 
 
 # mock helpers
-def mock_healthcheck(fail=False, fail_how='error', session_type=None):
+def mock_healthcheck(fail=False, fail_how='error', session_type=None, widths=None, config=None):
     health_body = { "success": True }
     health_headers = { 'X-Percy-Core-Version': '1.0.0' }
     health_status = 200
@@ -64,6 +65,8 @@ def mock_healthcheck(fail=False, fail_how='error', session_type=None):
     if session_type:
         health_body["type"] = session_type
 
+    if widths: health_body['widths'] = widths
+    if config: health_body['config'] = config
     health_body = json.dumps(health_body)
     httpretty.register_uri(
         httpretty.GET, 'http://localhost:5338/percy/healthcheck',
@@ -72,7 +75,10 @@ def mock_healthcheck(fail=False, fail_how='error', session_type=None):
         status=health_status)
     httpretty.register_uri(
         httpretty.GET, 'http://localhost:5338/percy/dom.js',
-        body='window.PercyDOM = { serialize: () => document.documentElement.outerHTML };',
+        body='window.PercyDOM = \
+         { serialize: () => { return { html: document.documentElement.outerHTML } }, \
+           waitForResize: () => { if(!window.resizeCount) { window.addEventListener(\'resize\',\
+             () => window.resizeCount++) } window.resizeCount = 0; }}',
         status=200)
 
 def mock_snapshot(fail=False, data=False):
@@ -84,6 +90,13 @@ def mock_snapshot(fail=False, data=False):
             "data": data_object if data else None
         }),
         status=(500 if fail else 200))
+
+def mock_logger():
+    httpretty.register_uri(
+        httpretty.POST, 'http://localhost:5338/percy/log',
+        body = json.dumps({ "success": "true" }),
+        status=200
+    )
 
 def mock_screenshot(fail=False, data=False):
 
@@ -112,6 +125,7 @@ class TestPercySnapshot(unittest.TestCase):
         local.is_percy_enabled.cache_clear()
         local.fetch_percy_dom.cache_clear()
         self.driver.get('http://localhost:8000')
+        self.driver.delete_all_cookies()
         httpretty.enable()
 
     def tearDown(self):
@@ -165,6 +179,9 @@ class TestPercySnapshot(unittest.TestCase):
     def test_posts_snapshots_to_the_local_percy_server(self):
         mock_healthcheck()
         mock_snapshot()
+        self.driver.add_cookie({'name': 'foo', 'value': 'bar'})
+        expected_cookies = [{'name': 'foo', 'value': 'bar', 'path': '/',
+            'domain': 'localhost', 'secure': False, 'httpOnly': False, 'sameSite': 'None'}]
 
         percy_snapshot(self.driver, 'Snapshot 1')
         response = percy_snapshot(self.driver, 'Snapshot 2', enable_javascript=True)
@@ -174,7 +191,8 @@ class TestPercySnapshot(unittest.TestCase):
         s1 = httpretty.latest_requests()[2].parsed_body
         self.assertEqual(s1['name'], 'Snapshot 1')
         self.assertEqual(s1['url'], 'http://localhost:8000/')
-        self.assertEqual(s1['dom_snapshot'], '<html><head></head><body>Snapshot Me</body></html>')
+        self.assertEqual(s1['dom_snapshot'], { 'cookies': expected_cookies,
+            'html': '<html><head></head><body>Snapshot Me</body></html>'})
         self.assertRegex(s1['client_info'], r'percy-selenium-python/\d+')
         self.assertRegex(s1['environment_info'][0], r'selenium/\d+')
         self.assertRegex(s1['environment_info'][1], r'python/\d+')
@@ -196,7 +214,8 @@ class TestPercySnapshot(unittest.TestCase):
         s1 = httpretty.latest_requests()[2].parsed_body
         self.assertEqual(s1['name'], 'Snapshot 1')
         self.assertEqual(s1['url'], 'http://localhost:8000/')
-        self.assertEqual(s1['dom_snapshot'], '<html><head></head><body>Snapshot Me</body></html>')
+        self.assertEqual(s1['dom_snapshot'], {
+            'html': '<html><head></head><body>Snapshot Me</body></html>', 'cookies': [] })
         self.assertRegex(s1['client_info'], r'percy-selenium-python/\d+')
         self.assertRegex(s1['environment_info'][0], r'selenium/\d+')
         self.assertRegex(s1['environment_info'][1], r'python/\d+')
@@ -206,6 +225,99 @@ class TestPercySnapshot(unittest.TestCase):
         self.assertEqual(s2['enable_javascript'], True)
         self.assertEqual(s2['sync'], True)
         self.assertEqual(response, data_object)
+
+    def test_posts_snapshots_to_the_local_percy_server_for_responsive_snapshot_capture(self):
+        mock_logger()
+        mock_healthcheck(widths = { "config": [375, 1280], "mobile": [390]})
+        mock_snapshot()
+        dom_string = '<html><head></head><body>Snapshot Me</body></html>'
+        self.driver.add_cookie({'name': 'foo', 'value': 'bar'})
+        expected_cookies = [{'name': 'foo', 'value': 'bar', 'path': '/', 'domain': 'localhost',
+            'secure': False, 'httpOnly': False, 'sameSite': 'None'}]
+        expected_dom_snapshot = [
+            { 'cookies': expected_cookies, 'html': dom_string, 'width': 1280 },
+            { 'cookies': expected_cookies, 'html': dom_string, 'width': 390 },
+            { 'cookies': expected_cookies, 'html': dom_string, 'width': 375 }
+        ]
+        window_size = self.driver.get_window_size()
+
+        percy_snapshot(self.driver, 'Snapshot 1', responsiveSnapshotCapture = True)
+        percy_snapshot(self.driver, 'Snapshot 2', responsive_snapshot_capture=True, widths=[765])
+        percy_snapshot(self.driver, 'Snapshot 3', responsive_snapshot_capture = True, width = 820)
+
+        new_window_size = self.driver.get_window_size()
+        self.assertEqual(window_size['width'], new_window_size['width'])
+        self.assertEqual(window_size['height'], new_window_size['height'])
+
+        self.assertEqual(httpretty.last_request().path, '/percy/snapshot')
+
+        s1 = httpretty.latest_requests()[4].parsed_body
+        self.assertEqual(s1['name'], 'Snapshot 1')
+        self.assertEqual(s1['url'], 'http://localhost:8000/')
+        self.assertEqual(s1['dom_snapshot'], expected_dom_snapshot)
+        self.assertRegex(s1['client_info'], r'percy-selenium-python/\d+')
+        self.assertRegex(s1['environment_info'][0], r'selenium/\d+')
+        self.assertRegex(s1['environment_info'][1], r'python/\d+')
+
+        s2 = httpretty.latest_requests()[5].parsed_body
+        self.assertEqual(s2['name'], 'Snapshot 2')
+        self.assertEqual(s2['dom_snapshot'], [
+            { 'cookies': expected_cookies, 'html': dom_string, 'width': 765 },
+            { 'html': dom_string, 'cookies': expected_cookies, 'width': 390 }
+        ])
+
+        s3 = httpretty.latest_requests()[6].parsed_body
+        self.assertEqual(s3['name'], 'Snapshot 3')
+        self.assertEqual(s3['dom_snapshot'], [
+            { 'cookies': expected_cookies, 'html': dom_string, 'width': 820 },
+            { 'html': dom_string, 'cookies': expected_cookies, 'width': 390 }
+        ])
+
+    def test_posts_snapshots_to_the_local_percy_server_with_defer_and_responsive(self):
+        mock_logger()
+        mock_healthcheck(widths = { "config": [375, 1280], "mobile": [390]},
+                         config = { 'percy': { 'deferUploads': True }})
+        mock_snapshot()
+        dom_string = '<html><head></head><body>Snapshot Me</body></html>'
+        expected_dom_snapshot = { 'html': dom_string, 'cookies': [] }
+
+        percy_snapshot(self.driver, 'Snapshot 1', responsiveSnapshotCapture = True)
+
+        self.assertEqual(httpretty.last_request().path, '/percy/snapshot')
+
+        s1 = httpretty.latest_requests()[2].parsed_body
+        self.assertEqual(s1['name'], 'Snapshot 1')
+        self.assertEqual(s1['url'], 'http://localhost:8000/')
+        self.assertEqual(s1['dom_snapshot'], expected_dom_snapshot)
+
+
+    @patch('selenium.webdriver.Chrome')
+    def test_posts_snapshots_to_the_local_percy_server_for_responsive_dom_chrome(self, MockChrome):
+        os.environ['RESONSIVE_CAPTURE_SLEEP_TIME'] = '1'
+        driver = MockChrome.return_value
+        driver.execute_script.side_effect = [
+            '', '', 1, { 'html': 'some_dom' }, 2, { 'html': 'some_dom_1' }, 3
+        ]
+        driver.get_cookies.return_value = ''
+        driver.execute_cdp_cmd.return_value = ''
+        driver.get_window_size.return_value = { 'height': 400, 'width': 800 }
+        mock_healthcheck(widths = { "config": [375], "mobile": [390] })
+        mock_snapshot()
+        expected_dom_snapshot = [
+            { 'cookies': '', 'html': 'some_dom', 'width': 600 },
+            { 'cookies': '', 'html': 'some_dom_1', 'width': 390 }
+        ]
+
+        with patch.object(driver, 'current_url', 'http://localhost:8000/'):
+            with patch.object(driver, 'capabilities', new={ 'browserName': 'chrome' }):
+                percy_snapshot(driver, 'Snapshot 1', responsiveSnapshotCapture = True, width = 600)
+
+        self.assertEqual(httpretty.last_request().path, '/percy/snapshot')
+
+        s1 = httpretty.latest_requests()[2].parsed_body
+        self.assertEqual(s1['name'], 'Snapshot 1')
+        self.assertEqual(s1['url'], 'http://localhost:8000/')
+        self.assertEqual(s1['dom_snapshot'], expected_dom_snapshot)
 
     def test_has_a_backwards_compatible_function(self):
         mock_healthcheck()
@@ -218,16 +330,21 @@ class TestPercySnapshot(unittest.TestCase):
         s1 = httpretty.latest_requests()[2].parsed_body
         self.assertEqual(s1['name'], 'Snapshot')
         self.assertEqual(s1['url'], 'http://localhost:8000/')
-        self.assertEqual(s1['dom_snapshot'], '<html><head></head><body>Snapshot Me</body></html>')
+        self.assertEqual(s1['dom_snapshot'], {
+            'html': '<html><head></head><body>Snapshot Me</body></html>', 'cookies': [] })
 
     def test_handles_snapshot_errors(self):
         mock_healthcheck(session_type="web")
         mock_snapshot(fail=True)
+        mock_logger()
 
         with patch('builtins.print') as mock_print:
             percy_snapshot(self.driver, 'Snapshot 1')
 
             mock_print.assert_any_call(f'{LABEL} Could not take DOM snapshot "Snapshot 1"')
+        self.assertEqual(httpretty.latest_requests()[3].parsed_body, {
+            'message': f'{LABEL} Could not take DOM snapshot "Snapshot 1"', 'level': 'info' })
+        self.assertEqual(len(httpretty.latest_requests()), 5)
 
     def test_raise_error_poa_token_with_snapshot(self):
         mock_healthcheck(session_type="automate")
@@ -387,11 +504,15 @@ class TestPercyScreenshot(unittest.TestCase):
     def test_handles_screenshot_errors(self):
         mock_healthcheck(session_type="automate")
         mock_screenshot(fail=True)
+        mock_logger()
 
         with patch('builtins.print') as mock_print:
             percy_screenshot(self.driver, 'Snapshot 1')
 
             mock_print.assert_any_call(f'{LABEL} Could not take Screenshot "Snapshot 1"')
+
+        self.assertEqual(httpretty.latest_requests()[2].parsed_body, {
+            'message': f'{LABEL} Could not take Screenshot "Snapshot 1"', 'level': 'info' })
 
     def test_raise_error_web_token_with_screenshot(self):
         mock_healthcheck(session_type="web")
