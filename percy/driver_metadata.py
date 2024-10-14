@@ -32,7 +32,7 @@ class DriverMetaData:
         if session_caps is None:
             try:
                 session_caps = dict(self.driver.desired_capabilities)
-            except Exception as e:
+            except Exception:
                 session_caps = {}
             Cache.set_cache(self.session_id, Cache.session_capabilities, session_caps)
             return session_caps
