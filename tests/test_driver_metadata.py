@@ -61,3 +61,10 @@ class TestDriverMetadata(unittest.TestCase):
 
         self.mock_webdriver.session_capabilities = session_capabilities
         self.assertDictEqual(self.metadata.session_capabilities, session_capabilities)
+
+    @patch('percy.cache.Cache.CACHE', {})
+    def test_without_session_capabilities(self):
+        # this will raise error
+        self.mock_webdriver.desired_capabilities = 1
+
+        self.assertDictEqual(self.metadata.session_capabilities, {})
