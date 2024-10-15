@@ -230,7 +230,6 @@ def percy_automate_screenshot(driver, name, options = None, **kwargs):
             'sessionId': metadata.session_id,
             'commandExecutorUrl': metadata.command_executor_url,
             'capabilities': metadata.capabilities,
-            'sessionCapabilites': metadata.session_capabilities,
             'snapshotName': name,
             'options': options
         }}, timeout=600)
