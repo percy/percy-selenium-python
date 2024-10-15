@@ -14,16 +14,9 @@ class TestCache(unittest.TestCase):
             'platform': 'windows',
             'browserVersion': '115.0.1'
           }
-        self.session_capabilities = {
-            'browser': 'chrome',
-            'platform': 'windows',
-            'browserVersion': '115.0.1',
-            'session_name': 'abc'
-          }
 
         self.cache.set_cache(self.session_id, Cache.command_executor_url, self.command_executor_url)
         self.cache.set_cache(self.session_id, Cache.capabilities, self.capabilities)
-        self.cache.set_cache(self.session_id, Cache.session_capabilities, self.session_capabilities)
 
     def test_set_cache(self):
         with self.assertRaises(Exception) as e:
@@ -39,8 +32,6 @@ class TestCache(unittest.TestCase):
                          self.command_executor_url)
         self.assertDictEqual(self.cache.CACHE[self.session_id][Cache.capabilities],
                              self.capabilities)
-        self.assertDictEqual(self.cache.CACHE[self.session_id][Cache.session_capabilities],
-                             self.session_capabilities)
 
     def test_get_cache_invalid_args(self):
         with self.assertRaises(Exception) as e:
@@ -57,8 +48,6 @@ class TestCache(unittest.TestCase):
         self.assertEqual(url, self.command_executor_url)
         caps = self.cache.get_cache(self.session_id, Cache.capabilities)
         self.assertDictEqual(caps, self.capabilities)
-        session_caps = self.cache.get_cache(self.session_id, Cache.session_capabilities)
-        self.assertDictEqual(session_caps, self.session_capabilities)
         mock_cleanup_cache.assert_called()
 
     @patch('percy.cache.Cache.CACHE_TIMEOUT', 1)

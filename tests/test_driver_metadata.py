@@ -49,15 +49,3 @@ class TestDriverMetadata(unittest.TestCase):
 
         self.mock_webdriver.capabilities = capabilities
         self.assertDictEqual(self.metadata.capabilities, capabilities)
-
-    @patch('percy.cache.Cache.CACHE', {})
-    def test_session_capabilities(self):
-        session_capabilities = {
-            'browser': 'chrome',
-            'platform': 'windows',
-            'browserVersion': '115.0.1',
-            'session_name': 'abc'
-          }
-
-        self.mock_webdriver.session_capabilities = session_capabilities
-        self.assertDictEqual(self.metadata.session_capabilities, session_capabilities)

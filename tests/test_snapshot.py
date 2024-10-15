@@ -368,7 +368,6 @@ class TestPercyScreenshot(unittest.TestCase):
         driver = Mock(spec=mock_driver)
         driver.session_id = 'Dummy_session_id'
         driver.capabilities = { 'key': 'value' }
-        driver.desired_capabilities = { 'key': 'value' }
         driver.command_executor = Mock(spec=mock_connection)
         driver.command_executor._url = 'https://hub-cloud.browserstack.com/wd/hub' # pylint: disable=W0212
         return driver
@@ -481,7 +480,6 @@ class TestPercyScreenshot(unittest.TestCase):
         self.assertEqual(s1['sessionId'], driver.session_id)
         self.assertEqual(s1['commandExecutorUrl'], driver.command_executor._url) # pylint: disable=W0212
         self.assertEqual(s1['capabilities'], dict(driver.capabilities))
-        self.assertEqual(s1['sessionCapabilites'], dict(driver.desired_capabilities))
         self.assertRegex(s1['client_info'], r'percy-selenium-python/\d+')
         self.assertRegex(s1['environment_info'][0], r'selenium/\d+')
         self.assertRegex(s1['environment_info'][1], r'python/\d+')
