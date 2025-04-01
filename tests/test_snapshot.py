@@ -12,7 +12,7 @@ from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.remote.remote_connection import RemoteConnection
 from selenium.webdriver.safari.remote_connection import SafariRemoteConnection
-# from percy.snapshot import create_region
+from percy.snapshot import create_region
 
 from percy import percy_snapshot, percySnapshot, percy_screenshot
 import percy.snapshot as local
@@ -563,119 +563,120 @@ class TestPercySnapshotIntegration(unittest.TestCase):
         self.assertEqual(s2['name'], 'Snapshot 2')
         self.assertEqual(s2['enable_javascript'], True)
 
-# class TestCreateRegion(unittest.TestCase):
+class TestCreateRegion(unittest.TestCase):
 
-#     def test_create_region_with_all_params(self):
-#         result = create_region(
-#             boundingBox={"x": 10, "y": 20, "width": 100, "height": 200},
-#             elementXpath="//*[@id='test']",
-#             elementCSS=".test-class",
-#             padding=10,
-#             algorithm="intelliignore",
-#             diffSensitivity=0.8,
-#             imageIgnoreThreshold=0.5,
-#             carouselsEnabled=True,
-#             bannersEnabled=False,
-#             adsEnabled=True,
-#             diffIgnoreThreshold=0.2
-#         )
+    def test_create_region_with_all_params(self):
+        result = create_region(
+            boundingBox={"x": 10, "y": 20, "width": 100, "height": 200},
+            elementXpath="//*[@id='test']",
+            elementCSS=".test-class",
+            padding=10,
+            algorithm="intelliignore",
+            diffSensitivity=0.8,
+            imageIgnoreThreshold=0.5,
+            carouselsEnabled=True,
+            bannersEnabled=False,
+            adsEnabled=True,
+            diffIgnoreThreshold=0.2
+        )
 
-#         expected_result = {
-#             "algorithm": "intelliignore",
-#             "elementSelector": {
-#                 "boundingBox": {"x": 10, "y": 20, "width": 100, "height": 200},
-#                 "elementXpath": "//*[@id='test']",
-#                 "elementCSS": ".test-class"
-#             },
-#             "padding": 10,
-#             "configuration": {
-#                 "diffSensitivity": 0.8,
-#                 "imageIgnoreThreshold": 0.5,
-#                 "carouselsEnabled": True,
-#                 "bannersEnabled": False,
-#                 "adsEnabled": True
-#             },
-#             "assertion": {
-#                 "diffIgnoreThreshold": 0.2
-#             }
-#         }
+        expected_result = {
+            "algorithm": "intelliignore",
+            "elementSelector": {
+                "boundingBox": {"x": 10, "y": 20, "width": 100, "height": 200},
+                "elementXpath": "//*[@id='test']",
+                "elementCSS": ".test-class"
+            },
+            "padding": 10,
+            "configuration": {
+                "diffSensitivity": 0.8,
+                "imageIgnoreThreshold": 0.5,
+                "carouselsEnabled": True,
+                "bannersEnabled": False,
+                "adsEnabled": True
+            },
+            "assertion": {
+                "diffIgnoreThreshold": 0.2
+            }
+        }
 
-#         self.assertEqual(result, expected_result)
+        self.assertEqual(result, expected_result)
 
-#     def test_create_region_with_minimal_params(self):
-#         result = create_region(
-#             algorithm="standard",
-#             boundingBox={"x": 10, "y": 20, "width": 100, "height": 200}
-#         )
+    def test_create_region_with_minimal_params(self):
+        result = create_region(
+            algorithm="standard",
+            boundingBox={"x": 10, "y": 20, "width": 100, "height": 200}
+        )
 
-#         expected_result = {
-#             "algorithm": "standard",
-#             "elementSelector": {
-#                 "boundingBox": {"x": 10, "y": 20, "width": 100, "height": 200}
-#             }
-#         }
+        expected_result = {
+            "algorithm": "standard",
+            "elementSelector": {
+                "boundingBox": {"x": 10, "y": 20, "width": 100, "height": 200}
+            }
+        }
 
-#         self.assertEqual(result, expected_result)
+        self.assertEqual(result, expected_result)
 
-#     def test_create_region_with_padding(self):
-#         result = create_region(
-#             algorithm="ignore",
-#             padding=15
-#         )
+    def test_create_region_with_padding(self):
+        result = create_region(
+            algorithm="ignore",
+            padding=15
+        )
 
-#         expected_result = {
-#             "algorithm": "ignore",
-#             "elementSelector": {},
-#             "padding": 15
-#         }
+        expected_result = {
+            "algorithm": "ignore",
+            "elementSelector": {},
+            "padding": 15
+        }
 
-#         self.assertEqual(result, expected_result)
+        self.assertEqual(result, expected_result)
 
-#     def test_create_region_with_configuration_only_for_valid_algorithms(self):
-#         result = create_region(
-#             algorithm="intelliignore",
-#             diffSensitivity=0.9,
-#             imageIgnoreThreshold=0.7
-#         )
+    def test_create_region_with_configuration_only_for_valid_algorithms(self):
+        result = create_region(
+            algorithm="intelliignore",
+            diffSensitivity=0.9,
+            imageIgnoreThreshold=0.7
+        )
 
-#         expected_result = {
-#             "algorithm": "intelliignore",
-#             "elementSelector": {},
-#             "configuration": {
-#                 "diffSensitivity": 0.9,
-#                 "imageIgnoreThreshold": 0.7
-#             }
-#         }
+        expected_result = {
+            "algorithm": "intelliignore",
+            "elementSelector": {},
+            "configuration": {
+                "diffSensitivity": 0.9,
+                "imageIgnoreThreshold": 0.7
+            }
+        }
 
-#         self.assertEqual(result, expected_result)
+        self.assertEqual(result, expected_result)
 
-#     def test_create_region_with_diffIgnoreThreshold_in_assertion(self):
-#         result = create_region(
-#             algorithm="standard",
-#             diffIgnoreThreshold=0.3
-#         )
+    def test_create_region_with_diffIgnoreThreshold_in_assertion(self):
+        result = create_region(
+            algorithm="standard",
+            diffIgnoreThreshold=0.3
+        )
 
-#         expected_result = {
-#             "algorithm": "standard",
-#             "elementSelector": {},
-#             "assertion": {
-#                 "diffIgnoreThreshold": 0.3
-#             }
-#         }
+        expected_result = {
+            "algorithm": "standard",
+            "elementSelector": {},
+            "assertion": {
+                "diffIgnoreThreshold": 0.3
+            }
+        }
 
-#         self.assertEqual(result, expected_result)
+        self.assertEqual(result, expected_result)
 
-#     def test_create_region_with_invalid_algorithm(self):
-#         result = create_region(
-#             algorithm="invalid_algorithm"
-#         )
+    def test_create_region_with_invalid_algorithm(self):
+        result = create_region(
+            algorithm="invalid_algorithm"
+        )
 
-#         expected_result = {
-#             "algorithm": "invalid_algorithm",
-#             "elementSelector": {}
-#         }
+        expected_result = {
+            "algorithm": "invalid_algorithm",
+            "elementSelector": {}
+        }
 
-#         self.assertEqual(result, expected_result)
+        self.assertEqual(result, expected_result)
+
 
 if __name__ == '__main__':
     unittest.main()
