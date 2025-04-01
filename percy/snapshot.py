@@ -81,60 +81,60 @@ def fetch_percy_dom():
 
 # pylint: disable=too-many-arguments
 # pylint: disable=too-many-branches
-def create_region(
-    boundingBox=None,
-    elementXpath=None,
-    elementCSS=None,
-    padding=None,
-    algorithm="ignore",
-    diffSensitivity=None,
-    imageIgnoreThreshold=None,
-    carouselsEnabled=None,
-    bannersEnabled=None,
-    adsEnabled=None,
-    diffIgnoreThreshold=None
-    ):
+# def create_region(
+#     boundingBox=None,
+#     elementXpath=None,
+#     elementCSS=None,
+#     padding=None,
+#     algorithm="ignore",
+#     diffSensitivity=None,
+#     imageIgnoreThreshold=None,
+#     carouselsEnabled=None,
+#     bannersEnabled=None,
+#     adsEnabled=None,
+#     diffIgnoreThreshold=None
+#     ):
 
-    element_selector = {}
-    if boundingBox:
-        element_selector["boundingBox"] = boundingBox
-    if elementXpath:
-        element_selector["elementXpath"] = elementXpath
-    if elementCSS:
-        element_selector["elementCSS"] = elementCSS
+#     element_selector = {}
+#     if boundingBox:
+#         element_selector["boundingBox"] = boundingBox
+#     if elementXpath:
+#         element_selector["elementXpath"] = elementXpath
+#     if elementCSS:
+#         element_selector["elementCSS"] = elementCSS
 
-    region = {
-        "algorithm": algorithm,
-        "elementSelector": element_selector
-    }
+#     region = {
+#         "algorithm": algorithm,
+#         "elementSelector": element_selector
+#     }
 
-    if padding:
-        region["padding"] = padding
+#     if padding:
+#         region["padding"] = padding
 
-    configuration = {}
-    if algorithm in ["standard", "intelliignore"]:
-        if diffSensitivity is not None:
-            configuration["diffSensitivity"] = diffSensitivity
-        if imageIgnoreThreshold is not None:
-            configuration["imageIgnoreThreshold"] = imageIgnoreThreshold
-        if carouselsEnabled is not None:
-            configuration["carouselsEnabled"] = carouselsEnabled
-        if bannersEnabled is not None:
-            configuration["bannersEnabled"] = bannersEnabled
-        if adsEnabled is not None:
-            configuration["adsEnabled"] = adsEnabled
+#     configuration = {}
+#     if algorithm in ["standard", "intelliignore"]:
+#         if diffSensitivity is not None:
+#             configuration["diffSensitivity"] = diffSensitivity
+#         if imageIgnoreThreshold is not None:
+#             configuration["imageIgnoreThreshold"] = imageIgnoreThreshold
+#         if carouselsEnabled is not None:
+#             configuration["carouselsEnabled"] = carouselsEnabled
+#         if bannersEnabled is not None:
+#             configuration["bannersEnabled"] = bannersEnabled
+#         if adsEnabled is not None:
+#             configuration["adsEnabled"] = adsEnabled
 
-    if configuration:
-        region["configuration"] = configuration
+#     if configuration:
+#         region["configuration"] = configuration
 
-    assertion = {}
-    if diffIgnoreThreshold is not None:
-        assertion["diffIgnoreThreshold"] = diffIgnoreThreshold
+#     assertion = {}
+#     if diffIgnoreThreshold is not None:
+#         assertion["diffIgnoreThreshold"] = diffIgnoreThreshold
 
-    if assertion:
-        region["assertion"] = assertion
+#     if assertion:
+#         region["assertion"] = assertion
 
-    return region
+#     return region
 
 def get_serialized_dom(driver, cookies, **kwargs):
     dom_snapshot = driver.execute_script(f'return PercyDOM.serialize({json.dumps(kwargs)})')
