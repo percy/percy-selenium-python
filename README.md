@@ -127,14 +127,6 @@ percy_screenshot(driver, name = 'Screenshot 1')
             - `elementXpath` (string): The XPath selector for the element.
             - `elementCSS` (string): The CSS selector for the element.
 
-        - `padding` (optional)
-            - Specifies additional padding around the selected region.
-            - Properties:
-              - `top` (number): Padding from the top.
-              - `left` (number): Padding from the left.
-              - `right` (number): Padding from the right.
-              - `bottom` (number): Padding from the bottom.
-
         - `algorithm` (mandatory)
             - Specifies the snapshot comparison algorithm.
             - Allowed values: `standard`, `layout`, `ignore`, `intelliignore`.
@@ -157,12 +149,6 @@ obj1 = {
   "elementSelector": {
     "elementCSS": ".ad-banner" 
   },
-  "padding": {
-    top: 10,
-    left: 20,
-    right: 15,
-    bottom: 10
-  }
   "algorithm": "intelliignore",
   "configuration": {
     "diffSensitivity": 2,
