@@ -161,7 +161,22 @@ obj1 = {
     "diffIgnoreThreshold": 0.4,
   }
 };
-percy_snapshot(page, name="Homepage", regions: [obj1]);
+
+# we can use the createRegion function
+
+from percy import percy_snapshot
+from percy.screenshot import (create_region)
+
+obj2 = create_region(
+    algorithm="intellignore",
+    diffSensitivity=2,
+    imageIgnoreThreshold=0.2,
+    carouselsEnabled=True,
+    adsEnabled=True,
+    diffIgnoreThreshold=0.4
+)
+
+percy_snapshot(page, name="Homepage", regions=[obj1]);
 ```
 
 
