@@ -79,6 +79,58 @@ def fetch_percy_dom():
     response.raise_for_status()
     return response.text
 
+# pylint: disable=too-many-arguments, too-many-branches, too-many-locals
+def create_region(
+    boundingBox=None,
+    elementXpath=None,
+    elementCSS=None,
+    padding=None,
+    algorithm="ignore",
+    diffSensitivity=None,
+    imageIgnoreThreshold=None,
+    carouselsEnabled=None,
+    bannersEnabled=None,
+    adsEnabled=None,
+    diffIgnoreThreshold=None
+    ):
+
+    element_selector = {}
+    if boundingBox:
+        element_selector["boundingBox"] = boundingBox
+    if elementXpath:
+        element_selector["elementXpath"] = elementXpath
+    if elementCSS:
+        element_selector["elementCSS"] = elementCSS
+
+    region = {
+        "algorithm": algorithm,
+        "elementSelector": element_selector
+    }
+
+    if padding:
+        region["padding"] = padding
+
+    if algorithm in ["standard", "intelliignore"]:
+        config_values = {
+            "diffSensitivity": diffSensitivity,
+            "imageIgnoreThreshold": imageIgnoreThreshold,
+            "carouselsEnabled": carouselsEnabled,
+            "bannersEnabled": bannersEnabled,
+            "adsEnabled": adsEnabled,
+        }
+        configuration = {k: v for k, v in config_values.items() if v is not None}
+        if configuration:
+            region["configuration"] = configuration
+
+    assertion = {}
+    if diffIgnoreThreshold is not None:
+        assertion["diffIgnoreThreshold"] = diffIgnoreThreshold
+
+    if assertion:
+        region["assertion"] = assertion
+
+    return region
+
 def get_serialized_dom(driver, cookies, **kwargs):
     dom_snapshot = driver.execute_script(f'return PercyDOM.serialize({json.dumps(kwargs)})')
     dom_snapshot['cookies'] = cookies
