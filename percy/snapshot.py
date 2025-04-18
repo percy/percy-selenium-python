@@ -111,21 +111,17 @@ def create_region(
     if padding:
         region["padding"] = padding
 
-    configuration = {}
     if algorithm in ["standard", "intelliignore"]:
-        if diffSensitivity is not None:
-            configuration["diffSensitivity"] = diffSensitivity
-        if imageIgnoreThreshold is not None:
-            configuration["imageIgnoreThreshold"] = imageIgnoreThreshold
-        if carouselsEnabled is not None:
-            configuration["carouselsEnabled"] = carouselsEnabled
-        if bannersEnabled is not None:
-            configuration["bannersEnabled"] = bannersEnabled
-        if adsEnabled is not None:
-            configuration["adsEnabled"] = adsEnabled
-
-    if configuration:
-        region["configuration"] = configuration
+        config_values = {
+            "diffSensitivity": diffSensitivity,
+            "imageIgnoreThreshold": imageIgnoreThreshold,
+            "carouselsEnabled": carouselsEnabled,
+            "bannersEnabled": bannersEnabled,
+            "adsEnabled": adsEnabled,
+        }
+        configuration = {k: v for k, v in config_values.items() if v is not None}
+        if configuration:
+            region["configuration"] = configuration
 
     assertion = {}
     if diffIgnoreThreshold is not None:
