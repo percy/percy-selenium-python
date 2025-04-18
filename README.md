@@ -165,7 +165,7 @@ obj1 = {
 # we can use the createRegion function
 
 from percy import percy_snapshot
-from percy.screenshot import (create_region)
+from percy.snapshot import (create_region)
 
 obj2 = create_region(
     algorithm="intellignore",
