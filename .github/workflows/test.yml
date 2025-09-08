@@ -35,7 +35,7 @@ jobs:
           path: ~/.cache/pip
           key: v1/${{ runner.os }}/pypi-${{matrix.python}}/${{ hashFiles('{requirements,development}.txt') }}
           restore-keys: v1/${{ runner.os }}/pypi-${matrix.python}/
-      - uses: actions/setup-node@v3
+      - uses: actions/setup-node@v5
         with:
           node-version: 16
       - name: Get yarn cache directory path
