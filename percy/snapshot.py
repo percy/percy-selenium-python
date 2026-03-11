@@ -19,11 +19,16 @@ ENV_INFO = ['selenium/' + SELENIUM_VERSION, 'python/' + platform.python_version(
 PERCY_CLI_API = os.environ.get('PERCY_CLI_API') or 'http://localhost:5338'
 PERCY_DEBUG = os.environ.get('PERCY_LOGLEVEL') == 'debug'
 RESONSIVE_CAPTURE_SLEEP_TIME = os.environ.get('RESONSIVE_CAPTURE_SLEEP_TIME')
+PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT = os.environ.get("PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT")
+PERCY_RESPONSIVE_CAPTURE_RELOAD_PAGE = os.environ.get('PERCY_RESPONSIVE_CAPTURE_RELOAD_PAGE', 'false').lower()
 
 # for logging
 LABEL = '[\u001b[35m' + ('percy:python' if PERCY_DEBUG else 'percy') + '\u001b[39m]'
 CDP_SUPPORT_SELENIUM = (str(SELENIUM_VERSION)[0].isdigit() and int(
     str(SELENIUM_VERSION)[0]) >= 4) if SELENIUM_VERSION else False
+
+
+
 
 def log(message, lvl = 'info'):
     message = f'{LABEL} {message}'
@@ -149,6 +154,30 @@ def get_widths_for_multi_dom(eligible_widths, **kwargs):
         allWidths.extend(eligible_widths.get('config', []))
     return list(set(allWidths))
 
+def get_responsive_widths(widths=None):
+    """Gets computed responsive widths from the Percy server for responsive snapshot capture."""
+    if widths is None:
+        widths = []
+    try:
+        widths_list = widths if isinstance(widths, list) else []
+        query_param = f"?widths={','.join(map(str, widths_list))}" if widths_list else ""
+        response = requests.get(
+            f"{PERCY_CLI_API}/percy/widths-config{query_param}",
+            timeout=30
+        )
+        response.raise_for_status()
+        data = response.json()
+        widths_data = data.get("widths")
+        if not isinstance(widths_data, list):
+            msg = "Update Percy CLI to the latest version to use responsiveSnapshotCapture"
+            raise Exception(msg)
+        return widths_data
+    except Exception as e:
+        log(f"Failed to get responsive widths: {e}.", "debug")
+        msg = "Update Percy CLI to the latest version to use responsiveSnapshotCapture"
+        raise Exception(msg) from e
+
+
 def change_window_dimension_and_wait(driver, width, height, resizeCount):
     try:
         if CDP_SUPPORT_SELENIUM and driver.capabilities['browserName'] == 'chrome':
@@ -168,26 +197,42 @@ def change_window_dimension_and_wait(driver, width, height, resizeCount):
         log(f"Timed out waiting for window resize event for width {width}", 'debug')
 
 
-def capture_responsive_dom(driver, eligible_widths, cookies, **kwargs):
-    widths = get_widths_for_multi_dom(eligible_widths, **kwargs)
+def capture_responsive_dom(driver, eligible_widths, cookies, config, **kwargs):
+    #widths = get_widths_for_multi_dom(eligible_widths, **kwargs)
+    widths = get_responsive_widths(kwargs.get('widths'))
+    log(widths, 'debug')
     dom_snapshots = []
     window_size = driver.get_window_size()
     current_width, current_height = window_size['width'], window_size['height']
+    log(f'Before window size: {current_width}x{current_height}', 'debug')
     last_window_width = current_width
     resize_count = 0
     driver.execute_script("PercyDOM.waitForResize()")
+    target_height = current_height
 
-    for width in widths:
+    if PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT:
+        min_height = kwargs.get('minHeight') or config.get('snapshot', {}).get('minHeight')
+        if min_height:
+            target_height = driver.execute_script(f"return window.outerHeight - window.innerHeight + {min_height}")
+            log(f'Calculated height for responsive capture using minHeight: {target_height}', 'debug')
+
+    for width_dict in widths:
+        width = width_dict['width']
         if last_window_width != width:
             resize_count += 1
-            change_window_dimension_and_wait(driver, width, current_height, resize_count)
+            change_window_dimension_and_wait(driver, width, target_height, resize_count)
             last_window_width = width
+
+        if PERCY_RESPONSIVE_CAPTURE_RELOAD_PAGE == 'true':
+            log(f'Reloading page for width: {width}', 'debug')
+            driver.refresh()
+            driver.execute_script(fetch_percy_dom())
 
         if RESONSIVE_CAPTURE_SLEEP_TIME: sleep(int(RESONSIVE_CAPTURE_SLEEP_TIME))
         dom_snapshot = get_serialized_dom(driver, cookies, **kwargs)
         dom_snapshot['width'] = width
         dom_snapshots.append(dom_snapshot)
-
+        
     change_window_dimension_and_wait(driver, current_width, current_height, resize_count + 1)
     return dom_snapshots
 
@@ -216,7 +261,7 @@ def percy_snapshot(driver, name, **kwargs):
 
         # Serialize and capture the DOM
         if is_responsive_snapshot_capture(data['config'], **kwargs):
-            dom_snapshot = capture_responsive_dom(driver, data['widths'], cookies, **kwargs)
+            dom_snapshot = capture_responsive_dom(driver, data['widths'], cookies, data['config'], **kwargs)
         else:
             dom_snapshot = get_serialized_dom(driver, cookies, **kwargs)
 
