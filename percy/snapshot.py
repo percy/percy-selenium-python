@@ -88,6 +88,7 @@ def fetch_percy_dom():
 
 # pylint: disable=too-many-arguments, too-many-branches, too-many-locals, R0917
 def create_region(
+    *,
     boundingBox=None,
     elementXpath=None,
     elementCSS=None,
