@@ -1,15 +1,15 @@
 # pylint: disable=[abstract-class-instantiated, arguments-differ]
 import unittest
 from unittest.mock import patch
-from selenium.webdriver import Remote
+from selenium.webdriver.remote.webdriver import WebDriver
 
 from percy.driver_metadata import DriverMetaData
 
 class TestDriverMetadata(unittest.TestCase):
-    @patch('selenium.webdriver.Remote')
+    @patch('selenium.webdriver.remote.webdriver.WebDriver')
     @patch('percy.cache.Cache.CACHE', {})
     def setUp(self, mock_webdriver) -> None:
-        mock_webdriver.__class__ = Remote  # pylint: disable=invalid-class-object
+        mock_webdriver.__class__ = WebDriver  # pylint: disable=invalid-class-object
         self.mock_webdriver = mock_webdriver
         self.mock_webdriver.session_id = 'session_id_123'
         self.mock_webdriver.command_executor._url = 'https://example-hub:4444/wd/hub' # pylint: disable=W0212
