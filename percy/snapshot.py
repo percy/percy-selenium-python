@@ -4,6 +4,8 @@ import json
 from functools import lru_cache
 from time import sleep
 import requests
+from contextlib import contextmanager
+from urllib.parse import urlparse
 
 from selenium.webdriver import __version__ as SELENIUM_VERSION
 from selenium.common.exceptions import TimeoutException
@@ -15,13 +17,15 @@ from percy.driver_metadata import DriverMetaData
 CLIENT_INFO = 'percy-selenium-python/' + SDK_VERSION
 ENV_INFO = ['selenium/' + SELENIUM_VERSION, 'python/' + platform.python_version()]
 
+def _get_bool_env(key):
+    return os.environ.get(key, "").lower() == "true"
+
 # Maybe get the CLI API address from the environment
 PERCY_CLI_API = os.environ.get('PERCY_CLI_API') or 'http://localhost:5338'
 PERCY_DEBUG = os.environ.get('PERCY_LOGLEVEL') == 'debug'
 RESONSIVE_CAPTURE_SLEEP_TIME = os.environ.get('RESONSIVE_CAPTURE_SLEEP_TIME')
-PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT = os.environ.get("PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT")
-PERCY_RESPONSIVE_CAPTURE_RELOAD_PAGE = os.environ.get('PERCY_RESPONSIVE_CAPTURE_RELOAD_PAGE', 'false').lower()
-
+PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT = _get_bool_env("PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT")
+PERCY_RESPONSIVE_CAPTURE_RELOAD_PAGE = _get_bool_env("PERCY_RESPONSIVE_CAPTURE_RELOAD_PAGE")
 # for logging
 LABEL = '[\u001b[35m' + ('percy:python' if PERCY_DEBUG else 'percy') + '\u001b[39m]'
 CDP_SUPPORT_SELENIUM = (str(SELENIUM_VERSION)[0].isdigit() and int(
@@ -136,23 +140,67 @@ def create_region(
 
     return region
 
-def get_serialized_dom(driver, cookies, **kwargs):
+@contextmanager
+def iframe_context(driver, frame_element):
+    """Safely switches to an iframe and always switches back to the parent."""
+    driver.switch_to.frame(frame_element)
+    try:
+        yield
+    finally:
+        driver.switch_to.parent_frame()
+
+def process_frame(driver, frame_element, options, percy_dom_script):
+    """Processes a single cross-origin frame to capture its snapshot."""
+    frame_url = frame_element.get_attribute('src') or "unknown-src"
+    with iframe_context(driver, frame_element):
+        try:
+            # Inject Percy DOM into the cross-origin frame context
+            driver.execute_script(percy_dom_script)
+            # Serialize inside the frame. 
+            # enableJavaScript=True is required to handle CORS iframes manually.
+            iframe_options = {**options, 'enableJavaScript': True}
+            iframe_snapshot = driver.execute_script(
+                f"return PercyDOM.serialize({json.dumps(iframe_options)})"
+            )
+        except Exception as e:
+            log(f"Failed to process cross-origin frame {frame_url}: {e}", "debug")
+            return None
+    # Back in parent context: find the percyElementId created by the main page serialization
+    percy_element_id = frame_element.get_attribute('data-percy-element-id')
+    if not percy_element_id:
+        log(f"Skipping frame {frame_url}: no matching percyElementId found", "debug")
+        return None
+    return {
+        "iframeData": {"percyElementId": percy_element_id},
+        "iframeSnapshot": iframe_snapshot,
+        "frameUrl": frame_url
+    }
+
+def get_serialized_dom(driver, cookies, percy_dom_script=None, **kwargs):
+    # 1. Serialize the main page first (this adds the data-percy-element-ids)
     dom_snapshot = driver.execute_script(f'return PercyDOM.serialize({json.dumps(kwargs)})')
+    # 2. Process CORS IFrames
+    try:
+        page_url = urlparse(driver.current_url)
+        iframes = driver.find_elements("tag name", "iframe")
+        if iframes and percy_dom_script:
+            processed_frames = []
+            for frame in iframes:
+                frame_src = frame.get_attribute('src')
+                if not frame_src or frame_src == "about:blank":
+                    continue
+                # If the domain/host is different, it's cross-origin
+                if urlparse(frame_src).netloc != page_url.netloc:
+                    result = process_frame(driver, frame, kwargs, percy_dom_script)
+                    if result:
+                        processed_frames.append(result)
+            if processed_frames:
+                dom_snapshot["corsIframes"] = processed_frames
+    except Exception as e:
+        log(f"Failed to process cross-origin iframes: {e}", "debug")
+
     dom_snapshot['cookies'] = cookies
     return dom_snapshot
-
-def get_widths_for_multi_dom(eligible_widths, **kwargs):
-    user_passed_widths = kwargs.get('widths', [])
-    width = kwargs.get('width')
-    if width: user_passed_widths = [width]
-
-    # Deep copy mobile widths otherwise it will get overridden
-    allWidths = eligible_widths.get('mobile', [])[:]
-    if len(user_passed_widths) != 0:
-        allWidths.extend(user_passed_widths)
-    else:
-        allWidths.extend(eligible_widths.get('config', []))
-    return list(set(allWidths))
 
 def get_responsive_widths(widths=None):
     """Gets computed responsive widths from the Percy server for responsive snapshot capture."""
@@ -178,6 +226,15 @@ def get_responsive_widths(widths=None):
         raise Exception(msg) from e
 
 
+def _setup_resize_listener(driver):
+    """Initializes the resize counter and attaches a named listener to avoid duplicates."""
+    driver.execute_script("""
+        window._percyResizeHandler = () => { window.resizeCount++; };
+        window.removeEventListener('resize', window._percyResizeHandler);
+        window.resizeCount = 0;
+        window.addEventListener('resize', window._percyResizeHandler);
+    """)
+
 def change_window_dimension_and_wait(driver, width, height, resizeCount):
     try:
         if CDP_SUPPORT_SELENIUM and driver.capabilities['browserName'] == 'chrome':
@@ -196,8 +253,17 @@ def change_window_dimension_and_wait(driver, width, height, resizeCount):
     except TimeoutException:
         log(f"Timed out waiting for window resize event for width {width}", 'debug')
 
+def _responsive_sleep():
+    if not RESONSIVE_CAPTURE_SLEEP_TIME:
+        return
+    try:
+        secs = int(RESONSIVE_CAPTURE_SLEEP_TIME)
+        if secs > 0:
+                sleep(secs)
+    except (TypeError, ValueError):
+        pass
 
-def capture_responsive_dom(driver, eligible_widths, cookies, config, **kwargs):
+def capture_responsive_dom(driver, eligible_widths, cookies, config, percy_dom_script=None, **kwargs):
     #widths = get_widths_for_multi_dom(eligible_widths, **kwargs)
     widths = get_responsive_widths(kwargs.get('widths'))
     log(widths, 'debug')
@@ -207,6 +273,8 @@ def capture_responsive_dom(driver, eligible_widths, cookies, config, **kwargs):
     log(f'Before window size: {current_width}x{current_height}', 'debug')
     last_window_width = current_width
     resize_count = 0
+    # Initialize resize listener once before the loop
+    _setup_resize_listener(driver)
     driver.execute_script("PercyDOM.waitForResize()")
     target_height = current_height
 
@@ -223,13 +291,16 @@ def capture_responsive_dom(driver, eligible_widths, cookies, config, **kwargs):
             change_window_dimension_and_wait(driver, width, target_height, resize_count)
             last_window_width = width
 
-        if PERCY_RESPONSIVE_CAPTURE_RELOAD_PAGE == 'true':
+        if PERCY_RESPONSIVE_CAPTURE_RELOAD_PAGE:
             log(f'Reloading page for width: {width}', 'debug')
             driver.refresh()
-            driver.execute_script(fetch_percy_dom())
+            driver.execute_script(percy_dom_script)
+            _setup_resize_listener(driver)
+            driver.execute_script("PercyDOM.waitForResize();")
+            resize_count = 0 # Reset count because the listener just started fresh
 
-        if RESONSIVE_CAPTURE_SLEEP_TIME: sleep(int(RESONSIVE_CAPTURE_SLEEP_TIME))
-        dom_snapshot = get_serialized_dom(driver, cookies, **kwargs)
+        _responsive_sleep()
+        dom_snapshot = get_serialized_dom(driver, cookies, percy_dom_script=percy_dom_script, **kwargs)
         dom_snapshot['width'] = width
         dom_snapshots.append(dom_snapshot)
         
@@ -256,14 +327,15 @@ def percy_snapshot(driver, name, **kwargs):
 
     try:
         # Inject the DOM serialization script
-        driver.execute_script(fetch_percy_dom())
+        percy_dom_script = fetch_percy_dom()
+        driver.execute_script(percy_dom_script)
         cookies = driver.get_cookies()
 
         # Serialize and capture the DOM
         if is_responsive_snapshot_capture(data['config'], **kwargs):
-            dom_snapshot = capture_responsive_dom(driver, data['widths'], cookies, data['config'], **kwargs)
+            dom_snapshot = capture_responsive_dom(driver, data['widths'], cookies, data['config'],percy_dom_script=percy_dom_script, **kwargs)
         else:
-            dom_snapshot = get_serialized_dom(driver, cookies, **kwargs)
+            dom_snapshot = get_serialized_dom(driver, cookies, percy_dom_script=percy_dom_script, **kwargs)
 
         # Post the DOM to the snapshot endpoint with snapshot options and other info
         response = requests.post(f'{PERCY_CLI_API}/percy/snapshot', json={**kwargs, **{
