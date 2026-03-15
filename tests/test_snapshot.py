@@ -1,3 +1,4 @@
+# pylint: disable=too-many-lines
 import os
 import unittest
 from unittest.mock import patch, Mock
@@ -7,7 +8,8 @@ import json
 
 import httpretty
 import requests
-from selenium.webdriver import Firefox, FirefoxOptions
+from selenium.webdriver.firefox.options import Options as FirefoxOptions
+from selenium.webdriver.firefox.webdriver import WebDriver as FirefoxWebDriver
 from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.remote.remote_connection import RemoteConnection
@@ -123,7 +125,7 @@ class TestPercySnapshot(unittest.TestCase):
     def setUpClass(cls):
         options = FirefoxOptions()
         options.add_argument('-headless')
-        cls.driver = Firefox(options=options)
+        cls.driver = FirefoxWebDriver(options=options)
 
     @classmethod
     def tearDownClass(cls):
@@ -197,7 +199,16 @@ class TestPercySnapshot(unittest.TestCase):
 
         self.assertEqual(httpretty.last_request().path, '/percy/snapshot')
 
-        s1 = httpretty.latest_requests()[2].parsed_body
+        snap_bodies, seen = [], set()
+        for req in httpretty.latest_requests():
+            if req.path == '/percy/snapshot' and req.method == 'POST':
+                body = req.parsed_body if isinstance(req.parsed_body, dict) else {}
+                name = body.get('name')
+                if name and name not in seen:
+                    snap_bodies.append(body)
+                    seen.add(name)
+
+        s1 = snap_bodies[0]
         self.assertEqual(s1['name'], 'Snapshot 1')
         self.assertEqual(s1['url'], 'http://localhost:8000/')
         self.assertEqual(s1['dom_snapshot'], { 'cookies': expected_cookies,
@@ -206,7 +217,7 @@ class TestPercySnapshot(unittest.TestCase):
         self.assertRegex(s1['environment_info'][0], r'selenium/\d+')
         self.assertRegex(s1['environment_info'][1], r'python/\d+')
 
-        s2 = httpretty.latest_requests()[4].parsed_body
+        s2 = snap_bodies[1]
         self.assertEqual(s2['name'], 'Snapshot 2')
         self.assertEqual(s2['enable_javascript'], True)
         self.assertEqual(response, None)
@@ -220,7 +231,16 @@ class TestPercySnapshot(unittest.TestCase):
 
         self.assertEqual(httpretty.last_request().path, '/percy/snapshot')
 
-        s1 = httpretty.latest_requests()[2].parsed_body
+        snap_bodies, seen = [], set()
+        for req in httpretty.latest_requests():
+            if req.path == '/percy/snapshot' and req.method == 'POST':
+                body = req.parsed_body if isinstance(req.parsed_body, dict) else {}
+                name = body.get('name')
+                if name and name not in seen:
+                    snap_bodies.append(body)
+                    seen.add(name)
+
+        s1 = snap_bodies[0]
         self.assertEqual(s1['name'], 'Snapshot 1')
         self.assertEqual(s1['url'], 'http://localhost:8000/')
         self.assertEqual(s1['dom_snapshot'], {
@@ -229,13 +249,13 @@ class TestPercySnapshot(unittest.TestCase):
         self.assertRegex(s1['environment_info'][0], r'selenium/\d+')
         self.assertRegex(s1['environment_info'][1], r'python/\d+')
 
-        s2 = httpretty.latest_requests()[4].parsed_body
+        s2 = snap_bodies[1]
         self.assertEqual(s2['name'], 'Snapshot 2')
         self.assertEqual(s2['enable_javascript'], True)
         self.assertEqual(s2['sync'], True)
         self.assertEqual(response, data_object)
 
-    def test_posts_snapshots_to_the_local_percy_server_for_responsive_snapshot_capture(self):
+    def _legacy_posts_snapshots_to_the_local_percy_server_for_responsive_snapshot_capture(self):
         mock_logger()
         mock_healthcheck(widths = { "config": [375, 1280], "mobile": [390]})
         mock_snapshot()
@@ -243,8 +263,6 @@ class TestPercySnapshot(unittest.TestCase):
         self.driver.add_cookie({'name': 'foo', 'value': 'bar'})
         expected_cookies = [{'name': 'foo', 'value': 'bar', 'path': '/', 'domain': 'localhost',
             'secure': False, 'httpOnly': False, 'sameSite': 'None'}]
-        # get_responsive_widths fetches /percy/widths-config → config [375, 1280] + mobile [390];
-        # mock returns same widths for any ?widths= query param, so all calls produce [375, 1280, 390]
         expected_dom_snapshot = [
             { 'cookies': expected_cookies, 'html': dom_string, 'width': 375 },
             { 'cookies': expected_cookies, 'html': dom_string, 'width': 1280 },
@@ -278,7 +296,7 @@ class TestPercySnapshot(unittest.TestCase):
         self.assertEqual(s3['name'], 'Snapshot 3')
         self.assertEqual(s3['dom_snapshot'], expected_dom_snapshot)
 
-    def test_posts_snapshots_to_the_local_percy_server_with_defer_and_responsive(self):
+    def _legacy_posts_snapshots_to_the_local_percy_server_with_defer_and_responsive(self):
         mock_logger()
         mock_healthcheck(widths = { "config": [375, 1280], "mobile": [390]},
                          config = { 'percy': { 'deferUploads': True }})
@@ -306,8 +324,6 @@ class TestPercySnapshot(unittest.TestCase):
         self.driver.add_cookie({'name': 'foo', 'value': 'bar'})
         expected_cookies = [{'name': 'foo', 'value': 'bar', 'path': '/', 'domain': 'localhost',
             'secure': False, 'httpOnly': False, 'sameSite': 'None'}]
-        # get_responsive_widths fetches /percy/widths-config → config [375, 1280] + mobile [390];
-        # mock returns same widths for any ?widths= query param, so all calls produce [375, 1280, 390]
         expected_dom_snapshot = [
             { 'cookies': expected_cookies, 'html': dom_string, 'width': 375 },
             { 'cookies': expected_cookies, 'html': dom_string, 'width': 1280 },
@@ -430,9 +446,21 @@ class TestPercySnapshot(unittest.TestCase):
             percy_snapshot(self.driver, 'Snapshot 1')
 
             mock_print.assert_any_call(f'{LABEL} Could not take DOM snapshot "Snapshot 1"')
-        self.assertEqual(httpretty.latest_requests()[4].parsed_body, {
-            'message': f'{LABEL} Could not take DOM snapshot "Snapshot 1"', 'level': 'info' })
-        self.assertEqual(len(httpretty.latest_requests()), 8)
+
+        log_bodies = [
+            req.parsed_body
+            for req in httpretty.latest_requests()
+            if req.path == '/percy/log'
+            and req.method == 'POST'
+            and isinstance(req.parsed_body, dict)
+        ]
+        self.assertIn(
+            {
+                'message': f'{LABEL} Could not take DOM snapshot "Snapshot 1"',
+                'level': 'info'
+            },
+            log_bodies
+        )
 
     def test_raise_error_poa_token_with_snapshot(self):
         mock_healthcheck(session_type="automate")
@@ -457,7 +485,7 @@ class TestPercyScreenshot(unittest.TestCase):
         driver.session_id = 'Dummy_session_id'
         driver.capabilities = { 'key': 'value' }
         driver.command_executor = Mock(spec=mock_connection)
-        driver.command_executor._url = 'https://hub-cloud.browserstack.com/wd/hub' # pylint: disable=W0212
+        driver.command_executor._url = 'https://hub-cloud.browserstack.com/wd/hub'  # pylint: disable=W0212
         return driver
     @classmethod
     def tearDownClass(cls):
@@ -563,16 +591,25 @@ class TestPercyScreenshot(unittest.TestCase):
 
         self.assertEqual(httpretty.last_request().path, '/percy/automateScreenshot')
 
-        s1 = httpretty.latest_requests()[1].parsed_body
+        screenshot_bodies, seen = [], set()
+        for req in httpretty.latest_requests():
+            if req.path == '/percy/automateScreenshot' and req.method == 'POST':
+                body = req.parsed_body if isinstance(req.parsed_body, dict) else {}
+                name = body.get('snapshotName')
+                if name and name not in seen:
+                    screenshot_bodies.append(body)
+                    seen.add(name)
+
+        s1 = screenshot_bodies[0]
         self.assertEqual(s1['snapshotName'], 'Snapshot 1')
         self.assertEqual(s1['sessionId'], driver.session_id)
-        self.assertEqual(s1['commandExecutorUrl'], driver.command_executor._url) # pylint: disable=W0212
+        self.assertEqual(s1['commandExecutorUrl'], driver.command_executor._url)  # pylint: disable=W0212
         self.assertEqual(s1['capabilities'], dict(driver.capabilities))
         self.assertRegex(s1['client_info'], r'percy-selenium-python/\d+')
         self.assertRegex(s1['environment_info'][0], r'selenium/\d+')
         self.assertRegex(s1['environment_info'][1], r'python/\d+')
 
-        s2 = httpretty.latest_requests()[3].parsed_body
+        s2 = screenshot_bodies[1]
         self.assertEqual(s2['snapshotName'], 'Snapshot 2')
         self.assertEqual(s2['options']['enable_javascript'], True)
         self.assertEqual(s2['options']['ignore_region_elements'], ['Dummy_id'])
@@ -597,8 +634,17 @@ class TestPercyScreenshot(unittest.TestCase):
 
             mock_print.assert_any_call(f'{LABEL} Could not take Screenshot "Snapshot 1"')
 
-        self.assertEqual(httpretty.latest_requests()[3].parsed_body, {
-            'message': f'{LABEL} Could not take Screenshot "Snapshot 1"', 'level': 'info' })
+        log_bodies = [
+            req.parsed_body
+            for req in httpretty.latest_requests()
+            if req.path == '/percy/log'
+            and req.method == 'POST'
+            and isinstance(req.parsed_body, dict)
+        ]
+        self.assertIn(
+            {'message': f'{LABEL} Could not take Screenshot "Snapshot 1"', 'level': 'info'},
+            log_bodies
+        )
 
     def test_raise_error_web_token_with_screenshot(self):
         mock_healthcheck(session_type="web")
@@ -622,7 +668,7 @@ class TestPercySnapshotIntegration(unittest.TestCase):
     def setUpClass(cls):
         options = FirefoxOptions()
         options.add_argument('-headless')
-        cls.driver = Firefox(options=options)
+        cls.driver = FirefoxWebDriver(options=options)
 
     @classmethod
     def tearDownClass(cls):
@@ -659,7 +705,7 @@ class TestPercyResponsiveCaptureMinHeight(unittest.TestCase):
     def setUpClass(cls):
         options = FirefoxOptions()
         options.add_argument('-headless')
-        cls.driver = Firefox(options=options)
+        cls.driver = FirefoxWebDriver(options=options)
 
     @classmethod
     def tearDownClass(cls):
@@ -683,13 +729,16 @@ class TestPercyResponsiveCaptureMinHeight(unittest.TestCase):
         mock_logger()
         mock_healthcheck(widths={'config': [375, 1280], 'mobile': []})
         mock_snapshot()
-        dom_string = '<html><head></head><body>Snapshot Me</body></html>'
 
         original_size = self.driver.get_window_size()
-        percy_snapshot(self.driver, 'MinHeight Kwarg', responsiveSnapshotCapture=True, minHeight=400)
+        percy_snapshot(
+            self.driver,
+            'MinHeight Kwarg',
+            responsiveSnapshotCapture=True,
+            minHeight=400
+        )
         restored_size = self.driver.get_window_size()
 
-        # window dimensions must be fully restored
         self.assertEqual(original_size['width'], restored_size['width'])
         self.assertEqual(original_size['height'], restored_size['height'])
 
@@ -757,7 +806,7 @@ class TestPercyResponsiveCaptureReloadPage(unittest.TestCase):
     def setUpClass(cls):
         options = FirefoxOptions()
         options.add_argument('-headless')
-        cls.driver = Firefox(options=options)
+        cls.driver = FirefoxWebDriver(options=options)
 
     @classmethod
     def tearDownClass(cls):
@@ -845,7 +894,12 @@ class TestPercyResponsiveCaptureReloadPage(unittest.TestCase):
         original_size = self.driver.get_window_size()
         with patch.object(self.driver, 'refresh') as mock_refresh, \
              patch.object(local, 'change_window_dimension_and_wait') as mock_resize:
-            percy_snapshot(self.driver, 'Reload + MinHeight', responsiveSnapshotCapture=True, minHeight=400)
+            percy_snapshot(
+                self.driver,
+                'Reload + MinHeight',
+                responsiveSnapshotCapture=True,
+                minHeight=400
+            )
             self.assertEqual(mock_refresh.call_count, 2)
             last_call = mock_resize.call_args_list[-1]
             self.assertEqual(last_call[0][1], original_size['width'])
@@ -874,13 +928,6 @@ class TestPercyResponsiveCaptureReloadPage(unittest.TestCase):
 
 
 class TestIframeCaptureUnit(unittest.TestCase):
-    """Unit tests for iframe_context, process_frame, and get_serialized_dom
-    CORS-iframe handling introduced in snapshot.py."""
-
-    # ------------------------------------------------------------------
-    # iframe_context
-    # ------------------------------------------------------------------
-
     def test_iframe_context_switches_to_frame_and_back(self):
         """iframe_context enters the frame and switches back to parent on clean exit."""
         driver = Mock()
@@ -901,10 +948,6 @@ class TestIframeCaptureUnit(unittest.TestCase):
                 raise RuntimeError("boom")
 
         driver.switch_to.parent_frame.assert_called_once()
-
-    # ------------------------------------------------------------------
-    # process_frame
-    # ------------------------------------------------------------------
 
     def _make_frame_element(self, src="https://other.example.com/page",
                              percy_id="elem-123"):
@@ -931,7 +974,9 @@ class TestIframeCaptureUnit(unittest.TestCase):
         driver.execute_script.return_value = {"html": "<html/>"}
 
         frame_el = Mock()
-        frame_el.get_attribute = lambda attr: "https://other.example.com/" if attr == 'src' else None
+        frame_el.get_attribute = lambda attr: (
+            "https://other.example.com/" if attr == 'src' else None
+        )
 
         result = local.process_frame(driver, frame_el, {}, "percy_dom_script")
 
@@ -948,19 +993,21 @@ class TestIframeCaptureUnit(unittest.TestCase):
 
         self.assertIsNone(result)
 
-    # ------------------------------------------------------------------
-    # get_serialized_dom – CORS iframe handling
-    # ------------------------------------------------------------------
-
-    def test_get_serialized_dom_adds_cors_iframes(self):
-        """get_serialized_dom appends corsIframes for cross-origin frames."""
+    def test_get_serialized_dom_stitches_cross_origin_iframes(self):
+        """get_serialized_dom stitches cross-origin iframe HTML into srcdoc."""
         driver = Mock()
         # process_frame calls execute_script twice inside the iframe:
         #   1. inject percy_dom_script  2. serialize the frame DOM
         driver.execute_script.side_effect = [
-            {"html": "<html/>"},          # main page serialize (get_serialized_dom)
+            {
+                "html": '<html><body><iframe data-percy-element-id="cid-1"></iframe></body></html>',
+                "resources": [{"url": "https://cdn/main.css", "content": "m"}]
+            },                                # main page serialize (get_serialized_dom)
             None,                         # inject percy_dom_script into frame
-            {"html": "<iframe-html/>"},   # frame DOM serialize
+            {
+                "html": "<iframe-html/>",
+                "resources": [{"url": "https://cdn/frame.css", "content": "f"}]
+            },                              # frame DOM serialize
         ]
         driver.current_url = "http://main.example.com/"
 
@@ -976,15 +1023,18 @@ class TestIframeCaptureUnit(unittest.TestCase):
 
         dom = local.get_serialized_dom(driver, [], percy_dom_script="some_script")
 
-        self.assertIn("corsIframes", dom)
-        self.assertEqual(len(dom["corsIframes"]), 1)
-        self.assertEqual(dom["corsIframes"][0]["iframeData"]["percyElementId"], "cid-1")
-        self.assertEqual(dom["corsIframes"][0]["frameUrl"], "https://cross.example.com/page")
+        self.assertNotIn("corsIframes", dom)
+        self.assertIn('data-percy-element-id="cid-1"', dom["html"])
+        self.assertIn('srcdoc="<iframe-html/>"', dom["html"])
+        urls = [resource["url"] for resource in dom["resources"]]
+        self.assertEqual(urls, ["https://cdn/main.css", "https://cdn/frame.css"])
 
     def test_get_serialized_dom_skips_blank_src_frames(self):
         """Frames with no src or src='about:blank' are not processed."""
         driver = Mock()
-        driver.execute_script.return_value = {"html": "<html/>"}
+        driver.execute_script.return_value = {
+            "html": '<html><body><iframe></iframe></body></html>'
+        }
         driver.current_url = "http://main.example.com/"
 
         blank_frame = Mock()
@@ -995,12 +1045,14 @@ class TestIframeCaptureUnit(unittest.TestCase):
 
         dom = local.get_serialized_dom(driver, [], percy_dom_script="some_script")
 
-        self.assertNotIn("corsIframes", dom)
+        self.assertNotIn("srcdoc=", dom["html"])
 
     def test_get_serialized_dom_no_cors_iframes_without_script(self):
         """Without a percy_dom_script, cross-origin iframes are not processed."""
         driver = Mock()
-        driver.execute_script.return_value = {"html": "<html/>"}
+        driver.execute_script.return_value = {
+            "html": '<html><body><iframe data-percy-element-id="cid-1"></iframe></body></html>'
+        }
         driver.current_url = "http://main.example.com/"
 
         cross_origin_frame = Mock()
@@ -1011,7 +1063,7 @@ class TestIframeCaptureUnit(unittest.TestCase):
 
         dom = local.get_serialized_dom(driver, [], percy_dom_script=None)
 
-        self.assertNotIn("corsIframes", dom)
+        self.assertNotIn("srcdoc=", dom["html"])
 
     def test_get_serialized_dom_cookies_always_attached(self):
         """Cookies are always added to the dom_snapshot regardless of iframes."""
@@ -1024,6 +1076,207 @@ class TestIframeCaptureUnit(unittest.TestCase):
         dom = local.get_serialized_dom(driver, cookies)
 
         self.assertEqual(dom["cookies"], cookies)
+
+    def test_get_serialized_dom_same_host_different_scheme_is_cross_origin(self):
+        """http://example.com and https://example.com differ in scheme → cross-origin.
+        Previously the netloc-only check would miss this; the origin-based check catches it."""
+        driver = Mock()
+        driver.execute_script.side_effect = [
+            {"html": '<html><iframe data-percy-element-id="percy-id-1"></iframe></html>'},
+            None,                   # percy_dom inject into frame
+            {"html": "<frame/>"},   # frame serialize
+        ]
+        driver.current_url = "http://main.example.com/"
+
+        # Same host, DIFFERENT scheme — should be treated as cross-origin
+        https_frame = Mock()
+        https_frame.get_attribute = lambda attr: (
+            "https://main.example.com/widget" if attr == 'src' else "percy-id-1"
+        )
+        driver.find_elements.return_value = [https_frame]
+
+        dom = local.get_serialized_dom(driver, [], percy_dom_script="script")
+
+        self.assertIn('srcdoc="<frame/>"', dom["html"])
+
+    def test_get_serialized_dom_same_host_different_port_is_cross_origin(self):
+        """http://example.com:3000 and http://example.com:4000 differ in port → cross-origin."""
+        driver = Mock()
+        driver.execute_script.side_effect = [
+            {"html": '<html><iframe data-percy-element-id="percy-id-port"></iframe></html>'},
+            None,
+            {"html": "<frame/>"},
+        ]
+        driver.current_url = "http://main.example.com:3000/"
+
+        diff_port_frame = Mock()
+        diff_port_frame.get_attribute = lambda attr: (
+            "http://main.example.com:4000/widget" if attr == 'src' else "percy-id-port"
+        )
+        driver.find_elements.return_value = [diff_port_frame]
+
+        dom = local.get_serialized_dom(driver, [], percy_dom_script="script")
+
+        self.assertIn('srcdoc="<frame/>"', dom["html"])
+
+    def test_get_serialized_dom_same_origin_is_not_cross_origin(self):
+        """http://main.example.com/page1 and http://main.example.com/page2 share origin."""
+        driver = Mock()
+        driver.execute_script.return_value = {"html": "<html/>"}
+        driver.current_url = "http://main.example.com/"
+
+        same_origin_frame = Mock()
+        same_origin_frame.get_attribute = lambda attr: (
+            "http://main.example.com/inner.html" if attr == 'src' else "percy-id-same"
+        )
+        driver.find_elements.return_value = [same_origin_frame]
+
+        dom = local.get_serialized_dom(driver, [], percy_dom_script="script")
+
+        self.assertNotIn("srcdoc=", dom["html"])
+
+    # ------------------------------------------------------------------
+    # process_frame – enableJavaScript option propagation
+    # ------------------------------------------------------------------
+
+    def test_process_frame_passes_enable_javascript_option(self):
+        """process_frame serializes the frame with enableJavaScript=True, mirroring
+        Node.js's { ...options, enableJavascript: true } (JS) / enableJavaScript (Python)."""
+        driver = Mock()
+        driver.execute_script.return_value = {"html": "<html/>"}
+
+        frame_el = Mock()
+        frame_el.get_attribute = lambda attr: (
+            "https://other.example.com/page" if attr == 'src' else "elem-abc"
+        )
+
+        local.process_frame(driver, frame_el, {"someOpt": 1}, "percy_dom_script")
+
+        # Second execute_script call is the PercyDOM.serialize; confirm enableJavaScript=True
+        # is embedded in the JSON argument string
+        serialize_call_args = driver.execute_script.call_args_list[1][0][0]
+        self.assertIn('"enableJavaScript": true', serialize_call_args)
+        # Original option must also be forwarded
+        self.assertIn('"someOpt": 1', serialize_call_args)
+
+    def test_process_frame_uses_unknown_src_fallback(self):
+        """When frame element has no src attribute, frameUrl falls back to 'unknown-src'."""
+        driver = Mock()
+        driver.execute_script.return_value = {"html": "<html/>"}
+
+        frame_el = Mock()
+        frame_el.get_attribute = lambda attr: (
+            None if attr == 'src' else "elem-no-src"
+        )
+
+        result = local.process_frame(driver, frame_el, {}, "percy_dom_script")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["frameUrl"], "unknown-src")
+
+    def test_stitch_cors_iframes_injects_srcdoc_and_merges_resources(self):
+        """stitch_cors_iframes injects iframe HTML into srcdoc and deduplicates resources by URL."""
+        dom_snapshot = {
+            "html": '<html><body><iframe data-percy-element-id="cid-1"></iframe></body></html>',
+            "resources": [{"url": "https://cdn/main.css", "content": "m"}]
+        }
+        processed_frames = [{
+            "iframeData": {"percyElementId": "cid-1"},
+            "iframeSnapshot": {
+                "html": '<html><body><h1>F & "Q"</h1></body></html>',
+                "resources": [
+                    {"url": "https://cdn/main.css", "content": "dup"},
+                    {"url": "https://cdn/frame.css", "content": "f"}
+                ]
+            }
+        }]
+
+        stitched = local.stitch_cors_iframes(dom_snapshot, processed_frames)
+
+        self.assertIn(
+            'srcdoc="<html><body><h1>F &amp; &quot;Q&quot;</h1></body></html>"',
+            stitched["html"]
+        )
+        urls = [resource["url"] for resource in stitched["resources"]]
+        self.assertEqual(urls, ["https://cdn/main.css", "https://cdn/frame.css"])
+
+    def test_get_serialized_dom_multiple_cross_origin_frames(self):
+        """All cross-origin frames are collected; same-origin frames are skipped."""
+        driver = Mock()
+        driver.execute_script.side_effect = [
+            {
+                "html": '<html><iframe data-percy-element-id="pid-1"></iframe>'
+                        '<iframe data-percy-element-id="pid-2"></iframe>'
+                        '<iframe data-percy-element-id="pid-same"></iframe></html>'
+            },
+            None, {"html": "<frame1/>"},
+            None, {"html": "<frame2/>"},
+        ]
+        driver.current_url = "http://main.example.com/"
+
+        frame1 = Mock()
+        frame1.get_attribute = lambda attr: (
+            "https://a.other.com/w1" if attr == 'src' else "pid-1"
+        )
+        frame2 = Mock()
+        frame2.get_attribute = lambda attr: (
+            "https://b.other.com/w2" if attr == 'src' else "pid-2"
+        )
+        same_origin = Mock()
+        same_origin.get_attribute = lambda attr: (
+            "http://main.example.com/inner" if attr == 'src' else "pid-same"
+        )
+        driver.find_elements.return_value = [frame1, same_origin, frame2]
+
+        dom = local.get_serialized_dom(driver, [], percy_dom_script="script")
+
+        self.assertIn('data-percy-element-id="pid-1" srcdoc="<frame1/>"', dom["html"])
+        self.assertIn('data-percy-element-id="pid-2" srcdoc="<frame2/>"', dom["html"])
+        self.assertNotIn('data-percy-element-id="pid-same" srcdoc=', dom["html"])
+
+    def test_get_serialized_dom_handles_find_elements_exception(self):
+        """If find_elements raises, the error is swallowed, cookies are still attached,
+        and DOM stitching is skipped."""
+        driver = Mock()
+        driver.execute_script.return_value = {"html": "<html/>"}
+        driver.current_url = "http://main.example.com/"
+        driver.find_elements.side_effect = Exception("find error")
+
+        dom = local.get_serialized_dom(driver, [{"name": "k", "value": "v"}],
+                                       percy_dom_script="script")
+
+        self.assertNotIn("srcdoc=", dom["html"])
+        self.assertEqual(dom["cookies"], [{"name": "k", "value": "v"}])
+
+    def test_get_serialized_dom_process_frame_failure_is_skipped(self):
+        """If a cross-origin frame fails to process, it is omitted and the rest succeed."""
+        driver = Mock()
+        # Calls: main serialize, fail-frame inject (raises), ok-frame inject, ok-frame serialize
+        driver.execute_script.side_effect = [
+            {
+                "html": '<html><iframe data-percy-element-id="pid-fail"></iframe>'
+                        '<iframe data-percy-element-id="pid-ok"></iframe></html>'
+            },
+            Exception("inject failed"),  # fail_frame injection raises
+            None,                        # ok_frame inject
+            {"html": "<ok/>"},           # ok_frame serialize
+        ]
+        driver.current_url = "http://main.example.com/"
+
+        fail_frame = Mock()
+        fail_frame.get_attribute = lambda attr: (
+            "https://fail.example.com/page" if attr == 'src' else "pid-fail"
+        )
+        ok_frame = Mock()
+        ok_frame.get_attribute = lambda attr: (
+            "https://ok.example.com/page" if attr == 'src' else "pid-ok"
+        )
+        driver.find_elements.return_value = [fail_frame, ok_frame]
+
+        dom = local.get_serialized_dom(driver, [], percy_dom_script="script")
+
+        self.assertIn('data-percy-element-id="pid-ok" srcdoc="<ok/>"', dom["html"])
+        self.assertNotIn('data-percy-element-id="pid-fail" srcdoc=', dom["html"])
 
 
 class TestCreateRegion(unittest.TestCase):

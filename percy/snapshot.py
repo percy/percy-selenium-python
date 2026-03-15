@@ -1,11 +1,12 @@
 import os
 import platform
 import json
+import re
+from contextlib import contextmanager
 from functools import lru_cache
 from time import sleep
+from urllib.parse import urlparse, urljoin
 import requests
-from contextlib import contextmanager
-from urllib.parse import urlparse
 
 from selenium.webdriver import __version__ as SELENIUM_VERSION
 from selenium.common.exceptions import TimeoutException
@@ -30,9 +31,6 @@ PERCY_RESPONSIVE_CAPTURE_RELOAD_PAGE = _get_bool_env("PERCY_RESPONSIVE_CAPTURE_R
 LABEL = '[\u001b[35m' + ('percy:python' if PERCY_DEBUG else 'percy') + '\u001b[39m]'
 CDP_SUPPORT_SELENIUM = (str(SELENIUM_VERSION)[0].isdigit() and int(
     str(SELENIUM_VERSION)[0]) >= 4) if SELENIUM_VERSION else False
-
-
-
 
 def log(message, lvl = 'info'):
     message = f'{LABEL} {message}'
@@ -88,7 +86,7 @@ def fetch_percy_dom():
     response.raise_for_status()
     return response.text
 
-# pylint: disable=too-many-arguments, too-many-branches, too-many-locals
+# pylint: disable=too-many-arguments, too-many-branches, too-many-locals, too-many-positional-arguments
 def create_region(
     boundingBox=None,
     elementXpath=None,
@@ -156,7 +154,7 @@ def process_frame(driver, frame_element, options, percy_dom_script):
         try:
             # Inject Percy DOM into the cross-origin frame context
             driver.execute_script(percy_dom_script)
-            # Serialize inside the frame. 
+            # Serialize inside the frame.
             # enableJavaScript=True is required to handle CORS iframes manually.
             iframe_options = {**options, 'enableJavaScript': True}
             iframe_snapshot = driver.execute_script(
@@ -176,26 +174,103 @@ def process_frame(driver, frame_element, options, percy_dom_script):
         "frameUrl": frame_url
     }
 
+
+def _replace_iframe_with_srcdoc(match, srcdoc_value):
+    return f'{match.group(1)} srcdoc="{srcdoc_value}">'
+
+
+def _is_unsupported_iframe_src(frame_src):
+    return (
+        not frame_src or
+        frame_src == "about:blank" or
+        frame_src.startswith("javascript:") or
+        frame_src.startswith("data:") or
+        frame_src.startswith("vbscript:")
+    )
+
+
+def _get_origin(url):
+    parsed = urlparse(url)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+def stitch_cors_iframes(dom_snapshot, processed_frames):
+    html = dom_snapshot.get("html")
+    if not isinstance(html, str):
+        return dom_snapshot
+
+    combined_resources = []
+    if isinstance(dom_snapshot.get("resources"), list):
+        combined_resources = dom_snapshot["resources"][:]
+
+    seen_resource_urls = {
+        resource.get("url") for resource in combined_resources
+        if isinstance(resource, dict) and isinstance(resource.get("url"), str)
+    }
+
+    for frame in processed_frames:
+        iframe_data = frame.get("iframeData", {})
+        iframe_snapshot = frame.get("iframeSnapshot", {})
+        percy_element_id = iframe_data.get("percyElementId")
+        iframe_html = iframe_snapshot.get("html") if isinstance(iframe_snapshot, dict) else None
+
+        if not percy_element_id or not iframe_html:
+            continue
+
+        srcdoc_value = iframe_html.replace("&", "&amp;").replace('"', "&quot;")
+        escaped_id = re.escape(percy_element_id)
+        iframe_regex = re.compile(
+            rf'(<iframe\b[^>]*?data-percy-element-id="{escaped_id}"[^>]*?)(/?>)',
+            re.DOTALL
+        )
+
+        html = iframe_regex.sub(
+            lambda match, srcdoc=srcdoc_value: _replace_iframe_with_srcdoc(match, srcdoc),
+            html,
+            count=1
+        )
+
+        resources = iframe_snapshot.get("resources") if isinstance(iframe_snapshot, dict) else None
+        if isinstance(resources, list):
+            for resource in resources:
+                if not isinstance(resource, dict):
+                    continue
+                url = resource.get("url")
+                if not isinstance(url, str) or url in seen_resource_urls:
+                    continue
+                combined_resources.append(resource)
+                seen_resource_urls.add(url)
+
+    return {**dom_snapshot, "html": html, "resources": combined_resources}
+
 def get_serialized_dom(driver, cookies, percy_dom_script=None, **kwargs):
     # 1. Serialize the main page first (this adds the data-percy-element-ids)
     dom_snapshot = driver.execute_script(f'return PercyDOM.serialize({json.dumps(kwargs)})')
     # 2. Process CORS IFrames
     try:
-        page_url = urlparse(driver.current_url)
+        page_origin = _get_origin(driver.current_url)
         iframes = driver.find_elements("tag name", "iframe")
         if iframes and percy_dom_script:
             processed_frames = []
             for frame in iframes:
                 frame_src = frame.get_attribute('src')
-                if not frame_src or frame_src == "about:blank":
+                if _is_unsupported_iframe_src(frame_src):
                     continue
-                # If the domain/host is different, it's cross-origin
-                if urlparse(frame_src).netloc != page_url.netloc:
-                    result = process_frame(driver, frame, kwargs, percy_dom_script)
-                    if result:
-                        processed_frames.append(result)
+
+                try:
+                    frame_origin = _get_origin(urljoin(driver.current_url, frame_src))
+                except Exception as e:
+                    log(f"Skipping iframe \"{frame_src}\": {e}", "debug")
+                    continue
+
+                if frame_origin == page_origin:
+                    continue
+
+                result = process_frame(driver, frame, kwargs, percy_dom_script)
+                if result:
+                    processed_frames.append(result)
+
             if processed_frames:
-                dom_snapshot["corsIframes"] = processed_frames
+                dom_snapshot = stitch_cors_iframes(dom_snapshot, processed_frames)
     except Exception as e:
         log(f"Failed to process cross-origin iframes: {e}", "debug")
 
@@ -259,11 +334,12 @@ def _responsive_sleep():
     try:
         secs = int(RESONSIVE_CAPTURE_SLEEP_TIME)
         if secs > 0:
-                sleep(secs)
+            sleep(secs)
     except (TypeError, ValueError):
         pass
 
-def capture_responsive_dom(driver, eligible_widths, cookies, config, percy_dom_script=None, **kwargs):
+def capture_responsive_dom(
+        driver, _eligible_widths, cookies, config, percy_dom_script=None, **kwargs):
     #widths = get_widths_for_multi_dom(eligible_widths, **kwargs)
     widths = get_responsive_widths(kwargs.get('widths'))
     log(widths, 'debug')
@@ -281,8 +357,11 @@ def capture_responsive_dom(driver, eligible_widths, cookies, config, percy_dom_s
     if PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT:
         min_height = kwargs.get('minHeight') or config.get('snapshot', {}).get('minHeight')
         if min_height:
-            target_height = driver.execute_script(f"return window.outerHeight - window.innerHeight + {min_height}")
-            log(f'Calculated height for responsive capture using minHeight: {target_height}', 'debug')
+            target_height = driver.execute_script(
+                f"return window.outerHeight - window.innerHeight + {min_height}")
+            log(
+                f'Calculated height for responsive capture using minHeight: {target_height}',
+                'debug')
 
     for width_dict in widths:
         width = width_dict['width']
@@ -300,10 +379,11 @@ def capture_responsive_dom(driver, eligible_widths, cookies, config, percy_dom_s
             resize_count = 0 # Reset count because the listener just started fresh
 
         _responsive_sleep()
-        dom_snapshot = get_serialized_dom(driver, cookies, percy_dom_script=percy_dom_script, **kwargs)
+        dom_snapshot = get_serialized_dom(
+            driver, cookies, percy_dom_script=percy_dom_script, **kwargs)
         dom_snapshot['width'] = width
         dom_snapshots.append(dom_snapshot)
-        
+
     change_window_dimension_and_wait(driver, current_width, current_height, resize_count + 1)
     return dom_snapshots
 
@@ -333,9 +413,12 @@ def percy_snapshot(driver, name, **kwargs):
 
         # Serialize and capture the DOM
         if is_responsive_snapshot_capture(data['config'], **kwargs):
-            dom_snapshot = capture_responsive_dom(driver, data['widths'], cookies, data['config'],percy_dom_script=percy_dom_script, **kwargs)
+            dom_snapshot = capture_responsive_dom(
+                driver, data['widths'], cookies, data['config'],
+                percy_dom_script=percy_dom_script, **kwargs)
         else:
-            dom_snapshot = get_serialized_dom(driver, cookies, percy_dom_script=percy_dom_script, **kwargs)
+            dom_snapshot = get_serialized_dom(
+                driver, cookies, percy_dom_script=percy_dom_script, **kwargs)
 
         # Post the DOM to the snapshot endpoint with snapshot options and other info
         response = requests.post(f'{PERCY_CLI_API}/percy/snapshot', json={**kwargs, **{

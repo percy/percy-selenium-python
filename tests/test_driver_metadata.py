@@ -9,7 +9,7 @@ class TestDriverMetadata(unittest.TestCase):
     @patch('selenium.webdriver.Remote')
     @patch('percy.cache.Cache.CACHE', {})
     def setUp(self, mock_webdriver) -> None:
-        mock_webdriver.__class__ = Remote
+        mock_webdriver.__class__ = Remote  # pylint: disable=invalid-class-object
         self.mock_webdriver = mock_webdriver
         self.mock_webdriver.session_id = 'session_id_123'
         self.mock_webdriver.command_executor._url = 'https://example-hub:4444/wd/hub' # pylint: disable=W0212
