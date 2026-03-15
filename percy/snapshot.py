@@ -86,7 +86,7 @@ def fetch_percy_dom():
     response.raise_for_status()
     return response.text
 
-# pylint: disable=too-many-arguments, too-many-branches, too-many-locals, R0917
+# pylint: disable=too-many-arguments, too-many-branches, too-many-locals
 def create_region(
     *,
     boundingBox=None,
