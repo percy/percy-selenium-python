@@ -1,5 +1,4 @@
 # pylint: disable=too-many-lines
-import os
 import unittest
 from unittest.mock import patch, Mock
 from http.server import BaseHTTPRequestHandler, HTTPServer
