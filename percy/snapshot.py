@@ -24,7 +24,7 @@ def _get_bool_env(key):
 # Maybe get the CLI API address from the environment
 PERCY_CLI_API = os.environ.get('PERCY_CLI_API') or 'http://localhost:5338'
 PERCY_DEBUG = os.environ.get('PERCY_LOGLEVEL') == 'debug'
-RESONSIVE_CAPTURE_SLEEP_TIME = os.environ.get('RESONSIVE_CAPTURE_SLEEP_TIME')
+RESPONSIVE_CAPTURE_SLEEP_TIME = os.environ.get('RESPONSIVE_CAPTURE_SLEEP_TIME')
 PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT = _get_bool_env("PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT")
 PERCY_RESPONSIVE_CAPTURE_RELOAD_PAGE = _get_bool_env("PERCY_RESPONSIVE_CAPTURE_RELOAD_PAGE")
 # for logging
@@ -88,7 +88,6 @@ def fetch_percy_dom():
 
 # pylint: disable=too-many-arguments, too-many-branches, too-many-locals
 def create_region(
-    *,
     boundingBox=None,
     elementXpath=None,
     elementCSS=None,
@@ -305,8 +304,11 @@ def get_responsive_widths(widths=None):
 def _setup_resize_listener(driver):
     """Initializes the resize counter and attaches a named listener to avoid duplicates."""
     driver.execute_script("""
+        const handler = window._percyResizeHandler;
+         if (handler) {
+             window.removeEventListener('resize', handler);
+         }
         window._percyResizeHandler = () => { window.resizeCount++; };
-        window.removeEventListener('resize', window._percyResizeHandler);
         window.resizeCount = 0;
         window.addEventListener('resize', window._percyResizeHandler);
     """)
@@ -330,18 +332,16 @@ def change_window_dimension_and_wait(driver, width, height, resizeCount):
         log(f"Timed out waiting for window resize event for width {width}", 'debug')
 
 def _responsive_sleep():
-    if not RESONSIVE_CAPTURE_SLEEP_TIME:
+    if not RESPONSIVE_CAPTURE_SLEEP_TIME:
         return
     try:
-        secs = int(RESONSIVE_CAPTURE_SLEEP_TIME)
+        secs = int(RESPONSIVE_CAPTURE_SLEEP_TIME)
         if secs > 0:
             sleep(secs)
     except (TypeError, ValueError):
         pass
 
-def capture_responsive_dom(
-        driver, _eligible_widths, cookies, config, percy_dom_script=None, **kwargs):
-    #widths = get_widths_for_multi_dom(eligible_widths, **kwargs)
+def capture_responsive_dom(driver, cookies, config, percy_dom_script=None, **kwargs):
     widths = get_responsive_widths(kwargs.get('widths'))
     log(widths, 'debug')
     dom_snapshots = []
@@ -358,11 +358,20 @@ def capture_responsive_dom(
     if PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT:
         min_height = kwargs.get('minHeight') or config.get('snapshot', {}).get('minHeight')
         if min_height:
-            target_height = driver.execute_script(
-                f"return window.outerHeight - window.innerHeight + {min_height}")
-            log(
-                f'Calculated height for responsive capture using minHeight: {target_height}',
-                'debug')
+            try:
+                min_height_int = int(min_height)
+             except (TypeError, ValueError):
+                log(
+                     f'Invalid minHeight value {min_height!r}; expected integer, '
+                     'using current window height instead.',
+                     'debug',
+                 )
+             else:
+                target_height = driver.execute_script(
+                    f"return window.outerHeight - window.innerHeight + {min_height}")
+                log(
+                    f'Calculated height for responsive capture using minHeight: {target_height}',
+                    'debug')
 
     for width_dict in widths:
         width = width_dict['width']

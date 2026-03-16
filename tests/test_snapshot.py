@@ -388,7 +388,7 @@ class TestPercySnapshot(unittest.TestCase):
     @patch.object(local, 'PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT', None)
     @patch('selenium.webdriver.Chrome')
     def test_posts_snapshots_to_the_local_percy_server_for_responsive_dom_chrome(self, MockChrome):
-        os.environ['RESONSIVE_CAPTURE_SLEEP_TIME'] = '1'
+        os.environ['RESPONSIVE_CAPTURE_SLEEP_TIME'] = '1'
         driver = MockChrome.return_value
         # execute_script calls (reload=False):
         #  [0] inject percy_dom  [1] _setup_resize_listener  [2] waitForResize
