@@ -86,7 +86,7 @@ def fetch_percy_dom():
     response.raise_for_status()
     return response.text
 
-# pylint: disable=too-many-arguments, too-many-branches, too-many-locals
+# pylint: disable=too-many-arguments, too-many-branches, too-many-locals, too-many-positional-arguments
 def create_region(
     boundingBox=None,
     elementXpath=None,
@@ -359,14 +359,14 @@ def capture_responsive_dom(driver, cookies, config, percy_dom_script=None, **kwa
         min_height = kwargs.get('minHeight') or config.get('snapshot', {}).get('minHeight')
         if min_height:
             try:
-                min_height_int = int(min_height)
-             except (TypeError, ValueError):
+                min_height = int(min_height)
+            except (TypeError, ValueError):
                 log(
                      f'Invalid minHeight value {min_height!r}; expected integer, '
                      'using current window height instead.',
                      'debug',
                  )
-             else:
+            else:
                 target_height = driver.execute_script(
                     f"return window.outerHeight - window.innerHeight + {min_height}")
                 log(
@@ -424,8 +424,12 @@ def percy_snapshot(driver, name, **kwargs):
         # Serialize and capture the DOM
         if is_responsive_snapshot_capture(data['config'], **kwargs):
             dom_snapshot = capture_responsive_dom(
-                driver, data['widths'], cookies, data['config'],
-                percy_dom_script=percy_dom_script, **kwargs)
+                driver=driver,
+                cookies=cookies,
+                config=data['config'],
+                percy_dom_script=percy_dom_script,
+                **kwargs,
+            )
         else:
             dom_snapshot = get_serialized_dom(
                 driver, cookies, percy_dom_script=percy_dom_script, **kwargs)
