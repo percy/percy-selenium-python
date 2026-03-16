@@ -1,7 +1,6 @@
 import os
 import platform
 import json
-import re
 from contextlib import contextmanager
 from functools import lru_cache
 from time import sleep
@@ -86,7 +85,7 @@ def fetch_percy_dom():
     response.raise_for_status()
     return response.text
 
-# pylint: disable=too-many-arguments, too-many-branches, too-many-locals
+# pylint: disable=too-many-arguments, too-many-branches, too-many-locals, too-many-positional-arguments
 def create_region(
     boundingBox=None,
     elementXpath=None,
@@ -175,10 +174,6 @@ def process_frame(driver, frame_element, options, percy_dom_script):
     }
 
 
-def _replace_iframe_with_srcdoc(match, srcdoc_value):
-    return f'{match.group(1)} srcdoc="{srcdoc_value}">'
-
-
 def _is_unsupported_iframe_src(frame_src):
     return (
         not frame_src or
@@ -192,55 +187,6 @@ def _is_unsupported_iframe_src(frame_src):
 def _get_origin(url):
     parsed = urlparse(url)
     return f"{parsed.scheme}://{parsed.netloc}"
-
-def stitch_cors_iframes(dom_snapshot, processed_frames):
-    html = dom_snapshot.get("html")
-    if not isinstance(html, str):
-        return dom_snapshot
-
-    combined_resources = []
-    if isinstance(dom_snapshot.get("resources"), list):
-        combined_resources = dom_snapshot["resources"][:]
-
-    seen_resource_urls = {
-        resource.get("url") for resource in combined_resources
-        if isinstance(resource, dict) and isinstance(resource.get("url"), str)
-    }
-
-    for frame in processed_frames:
-        iframe_data = frame.get("iframeData", {})
-        iframe_snapshot = frame.get("iframeSnapshot", {})
-        percy_element_id = iframe_data.get("percyElementId")
-        iframe_html = iframe_snapshot.get("html") if isinstance(iframe_snapshot, dict) else None
-
-        if not percy_element_id or not iframe_html:
-            continue
-
-        srcdoc_value = iframe_html.replace("&", "&amp;").replace('"', "&quot;")
-        escaped_id = re.escape(percy_element_id)
-        iframe_regex = re.compile(
-            rf'(<iframe\b[^>]*?data-percy-element-id="{escaped_id}"[^>]*?)(/?>)',
-            re.DOTALL
-        )
-
-        html = iframe_regex.sub(
-            lambda match, srcdoc=srcdoc_value: _replace_iframe_with_srcdoc(match, srcdoc),
-            html,
-            count=1
-        )
-
-        resources = iframe_snapshot.get("resources") if isinstance(iframe_snapshot, dict) else None
-        if isinstance(resources, list):
-            for resource in resources:
-                if not isinstance(resource, dict):
-                    continue
-                url = resource.get("url")
-                if not isinstance(url, str) or url in seen_resource_urls:
-                    continue
-                combined_resources.append(resource)
-                seen_resource_urls.add(url)
-
-    return {**dom_snapshot, "html": html, "resources": combined_resources}
 
 def get_serialized_dom(driver, cookies, percy_dom_script=None, **kwargs):
     # 1. Serialize the main page first (this adds the data-percy-element-ids)
@@ -270,7 +216,7 @@ def get_serialized_dom(driver, cookies, percy_dom_script=None, **kwargs):
                     processed_frames.append(result)
 
             if processed_frames:
-                dom_snapshot = stitch_cors_iframes(dom_snapshot, processed_frames)
+                dom_snapshot['corsIframes'] = processed_frames
     except Exception as e:
         log(f"Failed to process cross-origin iframes: {e}", "debug")
 
@@ -278,7 +224,6 @@ def get_serialized_dom(driver, cookies, percy_dom_script=None, **kwargs):
     return dom_snapshot
 
 def get_responsive_widths(widths=None):
-    """Gets computed responsive widths from the Percy server for responsive snapshot capture."""
     if widths is None:
         widths = []
     try:
@@ -299,7 +244,6 @@ def get_responsive_widths(widths=None):
         log(f"Failed to get responsive widths: {e}.", "debug")
         msg = "Update Percy CLI to the latest version to use responsiveSnapshotCapture"
         raise Exception(msg) from e
-
 
 def _setup_resize_listener(driver):
     """Initializes the resize counter and attaches a named listener to avoid duplicates."""

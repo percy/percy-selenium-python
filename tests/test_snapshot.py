@@ -992,21 +992,16 @@ class TestIframeCaptureUnit(unittest.TestCase):
 
         self.assertIsNone(result)
 
-    def test_get_serialized_dom_stitches_cross_origin_iframes(self):
-        """get_serialized_dom stitches cross-origin iframe HTML into srcdoc."""
+    def test_get_serialized_dom_populates_cors_iframes(self):
         driver = Mock()
-        # process_frame calls execute_script twice inside the iframe:
-        #   1. inject percy_dom_script  2. serialize the frame DOM
         driver.execute_script.side_effect = [
             {
                 "html": '<html><body><iframe data-percy-element-id="cid-1"></iframe></body></html>',
-                "resources": [{"url": "https://cdn/main.css", "content": "m"}]
-            },                                # main page serialize (get_serialized_dom)
-            None,                         # inject percy_dom_script into frame
+                "resources": [{"url": "https://cdn/main.css", "content": "m"}]},                            
+            None,
             {
                 "html": "<iframe-html/>",
-                "resources": [{"url": "https://cdn/frame.css", "content": "f"}]
-            },                              # frame DOM serialize
+                "resources": [{"url": "https://cdn/frame.css", "content": "f"}]},                          
         ]
         driver.current_url = "http://main.example.com/"
 
@@ -1022,11 +1017,14 @@ class TestIframeCaptureUnit(unittest.TestCase):
 
         dom = local.get_serialized_dom(driver, [], percy_dom_script="some_script")
 
-        self.assertNotIn("corsIframes", dom)
-        self.assertIn('data-percy-element-id="cid-1"', dom["html"])
-        self.assertIn('srcdoc="<iframe-html/>"', dom["html"])
-        urls = [resource["url"] for resource in dom["resources"]]
-        self.assertEqual(urls, ["https://cdn/main.css", "https://cdn/frame.css"])
+        self.assertIn("corsIframes", dom)
+        self.assertEqual(len(dom["corsIframes"]), 1)
+        entry = dom["corsIframes"][0]
+        self.assertEqual(entry["iframeData"]["percyElementId"], "cid-1")
+        self.assertEqual(entry["iframeSnapshot"]["html"], "<iframe-html/>")
+        self.assertEqual(entry["frameUrl"], "https://cross.example.com/page")
+        # HTML is left unchanged (no srcdoc injection here — core handles that)
+        self.assertNotIn("srcdoc", dom["html"])
 
     def test_get_serialized_dom_skips_blank_src_frames(self):
         """Frames with no src or src='about:blank' are not processed."""
@@ -1044,7 +1042,7 @@ class TestIframeCaptureUnit(unittest.TestCase):
 
         dom = local.get_serialized_dom(driver, [], percy_dom_script="some_script")
 
-        self.assertNotIn("srcdoc=", dom["html"])
+        self.assertNotIn("corsIframes", dom)
 
     def test_get_serialized_dom_no_cors_iframes_without_script(self):
         """Without a percy_dom_script, cross-origin iframes are not processed."""
@@ -1062,7 +1060,7 @@ class TestIframeCaptureUnit(unittest.TestCase):
 
         dom = local.get_serialized_dom(driver, [], percy_dom_script=None)
 
-        self.assertNotIn("srcdoc=", dom["html"])
+        self.assertNotIn("corsIframes", dom)
 
     def test_get_serialized_dom_cookies_always_attached(self):
         """Cookies are always added to the dom_snapshot regardless of iframes."""
@@ -1096,7 +1094,8 @@ class TestIframeCaptureUnit(unittest.TestCase):
 
         dom = local.get_serialized_dom(driver, [], percy_dom_script="script")
 
-        self.assertIn('srcdoc="<frame/>"', dom["html"])
+        self.assertIn("corsIframes", dom)
+        self.assertEqual(dom["corsIframes"][0]["iframeSnapshot"]["html"], "<frame/>")
 
     def test_get_serialized_dom_same_host_different_port_is_cross_origin(self):
         """http://example.com:3000 and http://example.com:4000 differ in port → cross-origin."""
@@ -1116,7 +1115,8 @@ class TestIframeCaptureUnit(unittest.TestCase):
 
         dom = local.get_serialized_dom(driver, [], percy_dom_script="script")
 
-        self.assertIn('srcdoc="<frame/>"', dom["html"])
+        self.assertIn("corsIframes", dom)
+        self.assertEqual(dom["corsIframes"][0]["iframeSnapshot"]["html"], "<frame/>")
 
     def test_get_serialized_dom_same_origin_is_not_cross_origin(self):
         """http://main.example.com/page1 and http://main.example.com/page2 share origin."""
@@ -1132,7 +1132,7 @@ class TestIframeCaptureUnit(unittest.TestCase):
 
         dom = local.get_serialized_dom(driver, [], percy_dom_script="script")
 
-        self.assertNotIn("srcdoc=", dom["html"])
+        self.assertNotIn("corsIframes", dom)
 
     def test_process_frame_passes_enable_javascript_option(self):
         """process_frame serializes the frame with enableJavaScript=True, mirroring
@@ -1169,31 +1169,30 @@ class TestIframeCaptureUnit(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["frameUrl"], "unknown-src")
 
-    def test_stitch_cors_iframes_injects_srcdoc_and_merges_resources(self):
-        """stitch_cors_iframes injects iframe HTML into srcdoc and deduplicates resources by URL."""
-        dom_snapshot = {
-            "html": '<html><body><iframe data-percy-element-id="cid-1"></iframe></body></html>',
-            "resources": [{"url": "https://cdn/main.css", "content": "m"}]
-        }
-        processed_frames = [{
-            "iframeData": {"percyElementId": "cid-1"},
-            "iframeSnapshot": {
-                "html": '<html><body><h1>F & "Q"</h1></body></html>',
-                "resources": [
-                    {"url": "https://cdn/main.css", "content": "dup"},
-                    {"url": "https://cdn/frame.css", "content": "f"}
-                ]
-            }
-        }]
-
-        stitched = local.stitch_cors_iframes(dom_snapshot, processed_frames)
-
-        self.assertIn(
-            'srcdoc="<html><body><h1>F &amp; &quot;Q&quot;</h1></body></html>"',
-            stitched["html"]
+    def test_get_serialized_dom_corsIframes_entry_has_correct_structure(self):
+        dom_html = '<html><body><iframe data-percy-element-id="cid-1"></iframe></body></html>'
+        frame_resource = {"url": "https://cdn/frame.css", "content": "f"}
+        driver = Mock()
+        driver.execute_script.side_effect = [
+            {"html": dom_html, "resources": []},
+            None,
+            {"html": '<html><body><h1>Frame</h1></body></html>', "resources": [frame_resource]},
+        ]
+        driver.current_url = "http://main.example.com/"
+        frame = Mock()
+        frame.get_attribute = lambda attr: (
+            "https://cross.example.com/page" if attr == 'src' else "cid-1"
         )
-        urls = [resource["url"] for resource in stitched["resources"]]
-        self.assertEqual(urls, ["https://cdn/main.css", "https://cdn/frame.css"])
+        driver.find_elements.return_value = [frame]
+
+        dom = local.get_serialized_dom(driver, [], percy_dom_script="some_script")
+
+        self.assertIn("corsIframes", dom)
+        entry = dom["corsIframes"][0]
+        self.assertEqual(entry["frameUrl"], "https://cross.example.com/page")
+        self.assertEqual(entry["iframeData"], {"percyElementId": "cid-1"})
+        self.assertIn("Frame", entry["iframeSnapshot"]["html"])
+        self.assertIn(frame_resource, entry["iframeSnapshot"]["resources"])
 
     def test_get_serialized_dom_multiple_cross_origin_frames(self):
         """All cross-origin frames are collected; same-origin frames are skipped."""
@@ -1225,9 +1224,12 @@ class TestIframeCaptureUnit(unittest.TestCase):
 
         dom = local.get_serialized_dom(driver, [], percy_dom_script="script")
 
-        self.assertIn('data-percy-element-id="pid-1" srcdoc="<frame1/>"', dom["html"])
-        self.assertIn('data-percy-element-id="pid-2" srcdoc="<frame2/>"', dom["html"])
-        self.assertNotIn('data-percy-element-id="pid-same" srcdoc=', dom["html"])
+        self.assertIn("corsIframes", dom)
+        self.assertEqual(len(dom["corsIframes"]), 2)
+        pids = [e["iframeData"]["percyElementId"] for e in dom["corsIframes"]]
+        self.assertIn("pid-1", pids)
+        self.assertIn("pid-2", pids)
+        self.assertNotIn("pid-same", pids)
 
     def test_get_serialized_dom_handles_find_elements_exception(self):
         """If find_elements raises, the error is swallowed, cookies are still attached,
@@ -1240,7 +1242,7 @@ class TestIframeCaptureUnit(unittest.TestCase):
         dom = local.get_serialized_dom(driver, [{"name": "k", "value": "v"}],
                                        percy_dom_script="script")
 
-        self.assertNotIn("srcdoc=", dom["html"])
+        self.assertNotIn("corsIframes", dom)
         self.assertEqual(dom["cookies"], [{"name": "k", "value": "v"}])
 
     def test_get_serialized_dom_process_frame_failure_is_skipped(self):
@@ -1270,8 +1272,10 @@ class TestIframeCaptureUnit(unittest.TestCase):
 
         dom = local.get_serialized_dom(driver, [], percy_dom_script="script")
 
-        self.assertIn('data-percy-element-id="pid-ok" srcdoc="<ok/>"', dom["html"])
-        self.assertNotIn('data-percy-element-id="pid-fail" srcdoc=', dom["html"])
+        self.assertIn("corsIframes", dom)
+        self.assertEqual(len(dom["corsIframes"]), 1)
+        self.assertEqual(dom["corsIframes"][0]["iframeData"]["percyElementId"], "pid-ok")
+        self.assertEqual(dom["corsIframes"][0]["iframeSnapshot"]["html"], "<ok/>")
 
 
 class TestCreateRegion(unittest.TestCase):
