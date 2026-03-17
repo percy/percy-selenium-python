@@ -291,7 +291,6 @@ def capture_responsive_dom(driver, cookies, config, percy_dom_script=None, **kwa
     dom_snapshots = []
     window_size = driver.get_window_size()
     current_width, current_height = window_size['width'], window_size['height']
-    log(f'Before window size: {current_width}x{current_height}', 'debug')
     last_window_width = current_width
     resize_count = 0
     # Initialize resize listener once before the loop
@@ -319,9 +318,10 @@ def capture_responsive_dom(driver, cookies, config, percy_dom_script=None, **kwa
 
     for width_dict in widths:
         width = width_dict['width']
+        height = width_dict.get('height', target_height)
         if last_window_width != width:
             resize_count += 1
-            change_window_dimension_and_wait(driver, width, target_height, resize_count)
+            change_window_dimension_and_wait(driver, width, height, resize_count)
             last_window_width = width
 
         if PERCY_RESPONSIVE_CAPTURE_RELOAD_PAGE:
