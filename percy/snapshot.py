@@ -260,13 +260,18 @@ def _setup_resize_listener(driver):
 def change_window_dimension_and_wait(driver, width, height, resizeCount):
     try:
         if CDP_SUPPORT_SELENIUM and driver.capabilities['browserName'] == 'chrome':
+            print(f'Attempting to resize using CDP for width {width} and height {height}')
             driver.execute_cdp_cmd('Emulation.setDeviceMetricsOverride', { 'height': height,
                                 'width': width, 'deviceScaleFactor': 1, 'mobile': False })
         else:
+            #driver.execute_script(f"window.resizeTo({width}, {height});")
             driver.set_window_size(width, height)
     except Exception as e:
         log(f'Resizing using cdp failed falling back driver for width {width} {e}', 'debug')
+        print(f'Error during CDP resize: {e}, falling back to driver resize for width {width} and height {height}')
+        #driver.execute_script(f"window.resizeTo({width}, {height});")
         driver.set_window_size(width, height)
+    print(f'Resized to {width}x{height}, waiting for resize event...')
 
     try:
         WebDriverWait(driver, 1).until(
@@ -291,34 +296,29 @@ def capture_responsive_dom(driver, cookies, config, percy_dom_script=None, **kwa
     dom_snapshots = []
     window_size = driver.get_window_size()
     current_width, current_height = window_size['width'], window_size['height']
+    log(f'Before window size: {current_width}x{current_height}', 'debug')
     last_window_width = current_width
     resize_count = 0
     # Initialize resize listener once before the loop
-    _setup_resize_listener(driver)
+    
     driver.execute_script("PercyDOM.waitForResize()")
     target_height = current_height
 
     if PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT:
-        min_height = kwargs.get('minHeight') or config.get('snapshot', {}).get('minHeight')
-        if min_height:
+        target_height = kwargs.get('minHeight') or config.get('snapshot', {}).get('minHeight')
+        if target_height:
             try:
-                min_height = int(min_height)
+                target_height = int(target_height)
             except (TypeError, ValueError):
                 log(
-                     f'Invalid minHeight value {min_height!r}; expected integer, '
+                     f'Invalid minHeight value {target_height!r}; expected integer, '
                      'using current window height instead.',
                      'debug',
                  )
-            else:
-                target_height = driver.execute_script(
-                    f"return window.outerHeight - window.innerHeight + {min_height}")
-                log(
-                    f'Calculated height for responsive capture using minHeight: {target_height}',
-                    'debug')
-
     for width_dict in widths:
         width = width_dict['width']
         height = width_dict.get('height', target_height)
+        print(f'Capturing responsive snapshot for width: {width} and height: {height}')
         if last_window_width != width:
             resize_count += 1
             change_window_dimension_and_wait(driver, width, height, resize_count)
@@ -331,13 +331,17 @@ def capture_responsive_dom(driver, cookies, config, percy_dom_script=None, **kwa
             _setup_resize_listener(driver)
             driver.execute_script("PercyDOM.waitForResize();")
             resize_count = 0 # Reset count because the listener just started fresh
-
+        print(f'{width}x{height} ready, taking snapshot...')
         _responsive_sleep()
         dom_snapshot = get_serialized_dom(
             driver, cookies, percy_dom_script=percy_dom_script, **kwargs)
         dom_snapshot['width'] = width
+        
+        print(f'Taken snapshot for width: {width}, height: {height}')
         dom_snapshots.append(dom_snapshot)
-
+    with open("output_file.json", "w") as file_handle:
+        json.dump(dom_snapshots, file_handle, indent=4)
+    
     change_window_dimension_and_wait(driver, current_width, current_height, resize_count + 1)
     return dom_snapshots
 
