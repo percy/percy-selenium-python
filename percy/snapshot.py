@@ -268,7 +268,10 @@ def change_window_dimension_and_wait(driver, width, height, resizeCount):
             driver.set_window_size(width, height)
     except Exception as e:
         log(f'Resizing using cdp failed falling back driver for width {width} {e}', 'debug')
-        print(f'Error during CDP resize: {e}, falling back to driver resize for width {width} and height {height}')
+        print(
+            f'Error during CDP resize: {e}, '
+            f'falling back to driver resize for width {width} and height {height}'
+        )
         #driver.execute_script(f"window.resizeTo({width}, {height});")
         driver.set_window_size(width, height)
     print(f'Resized to {width}x{height}, waiting for resize event...')
@@ -300,7 +303,6 @@ def capture_responsive_dom(driver, cookies, config, percy_dom_script=None, **kwa
     last_window_width = current_width
     resize_count = 0
     # Initialize resize listener once before the loop
-    
     driver.execute_script("PercyDOM.waitForResize()")
     target_height = current_height
 
@@ -336,12 +338,10 @@ def capture_responsive_dom(driver, cookies, config, percy_dom_script=None, **kwa
         dom_snapshot = get_serialized_dom(
             driver, cookies, percy_dom_script=percy_dom_script, **kwargs)
         dom_snapshot['width'] = width
-        
         print(f'Taken snapshot for width: {width}, height: {height}')
         dom_snapshots.append(dom_snapshot)
-    with open("output_file.json", "w") as file_handle:
+    with open("output_file.json", "w", encoding="utf-8") as file_handle:
         json.dump(dom_snapshots, file_handle, indent=4)
-    
     change_window_dimension_and_wait(driver, current_width, current_height, resize_count + 1)
     return dom_snapshots
 
