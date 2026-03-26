@@ -23,7 +23,7 @@ def _get_bool_env(key):
 # Maybe get the CLI API address from the environment
 PERCY_CLI_API = os.environ.get('PERCY_CLI_API') or 'http://localhost:5338'
 PERCY_DEBUG = os.environ.get('PERCY_LOGLEVEL') == 'debug'
-RESPONSIVE_CAPTURE_SLEEP_TIME = os.environ.get('RESPONSIVE_CAPTURE_SLEEP_TIME')
+RESPONSIVE_CAPTURE_SLEEP_TIME = os.environ.get('RESPONSIVE_CAPTURE_SLEEP_TIME') or os.environ.get('RESONSIVE_CAPTURE_SLEEP_TIME')
 PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT = _get_bool_env("PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT")
 PERCY_RESPONSIVE_CAPTURE_RELOAD_PAGE = _get_bool_env("PERCY_RESPONSIVE_CAPTURE_RELOAD_PAGE")
 # for logging
