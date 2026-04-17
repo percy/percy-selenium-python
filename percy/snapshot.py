@@ -191,7 +191,44 @@ def _get_origin(url):
     parsed = urlparse(url)
     return f"{parsed.scheme}://{parsed.netloc}"
 
+def _wait_for_ready(driver, kwargs):
+    """Run readiness checks before serialize. PER-7348.
+
+    Sends PercyDOM.waitForReady via execute_async_script. The script checks
+    typeof PercyDOM.waitForReady in-browser so older CLI versions without the
+    method are a graceful no-op. Any failure is caught and logged at debug;
+    serialize still runs.
+
+    Readiness config precedence: kwargs['readiness'] > cached
+    percy.config.snapshot.readiness > {} (CLI falls back to balanced default).
+    If preset is 'disabled', skip the async script call entirely.
+    """
+    readiness_config = kwargs.get('readiness')
+    if readiness_config is None:
+        data = is_percy_enabled()
+        if isinstance(data, dict):
+            readiness_config = (data.get('config') or {}).get('snapshot', {}).get('readiness', {}) or {}
+        else:
+            readiness_config = {}
+    if isinstance(readiness_config, dict) and readiness_config.get('preset') == 'disabled':
+        return
+    try:
+        driver.execute_async_script(
+            'var config = ' + json.dumps(readiness_config) + ';'
+            'var done = arguments[arguments.length - 1];'
+            'try {'
+            "  if (typeof PercyDOM !== 'undefined' && typeof PercyDOM.waitForReady === 'function') {"
+            '    PercyDOM.waitForReady(config).then(function(r){ done(r); }).catch(function(){ done(); });'
+            '  } else { done(); }'
+            '} catch(e) { done(); }'
+        )
+    except Exception as e:
+        log(f'waitForReady failed, proceeding to serialize: {e}', 'debug')
+
+
 def get_serialized_dom(driver, cookies, percy_dom_script=None, **kwargs):
+    # 0. Readiness gate before serialize (PER-7348). Graceful on old CLI.
+    _wait_for_ready(driver, kwargs)
     # 1. Serialize the main page first (this adds the data-percy-element-ids)
     dom_snapshot = driver.execute_script(f'return PercyDOM.serialize({json.dumps(kwargs)})')
     # 2. Process CORS IFrames

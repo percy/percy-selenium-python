@@ -472,6 +472,72 @@ class TestPercySnapshot(unittest.TestCase):
         " For more information on usage of PercyScreenshot, refer https://www.browserstack.com"\
         "/docs/percy/integrate/functional-and-visual", str(context.exception))
 
+    # --- Readiness gate (PER-7348) ---------------------------------------
+
+    def test_readiness_runs_before_serialize_by_default(self):
+        mock_healthcheck()
+        mock_snapshot()
+
+        with patch.object(self.driver, 'execute_async_script', wraps=self.driver.execute_async_script) as async_spy, \
+             patch.object(self.driver, 'execute_script', wraps=self.driver.execute_script) as sync_spy:
+            percy_snapshot(self.driver, 'readiness-happy-path')
+
+        async_scripts = [c.args[0] for c in async_spy.call_args_list if c.args]
+        sync_scripts = [c.args[0] for c in sync_spy.call_args_list if c.args]
+        # Readiness call made at least once, and contains the typeof guard + waitForReady
+        self.assertTrue(any('waitForReady' in s and 'typeof PercyDOM' in s for s in async_scripts),
+                        f'expected readiness script via execute_async_script, got: {async_scripts}')
+        # Serialize call made at least once via sync execute_script
+        self.assertTrue(any('PercyDOM.serialize' in s for s in sync_scripts),
+                        f'expected serialize via execute_script, got: {sync_scripts}')
+
+    def test_readiness_uses_per_snapshot_config(self):
+        mock_healthcheck()
+        mock_snapshot()
+
+        readiness = {'preset': 'strict', 'stabilityWindowMs': 500}
+        with patch.object(self.driver, 'execute_async_script', wraps=self.driver.execute_async_script) as async_spy:
+            percy_snapshot(self.driver, 'readiness-config', readiness=readiness)
+
+        scripts = [c.args[0] for c in async_spy.call_args_list if c.args]
+        readiness_scripts = [s for s in scripts if 'waitForReady' in s]
+        self.assertTrue(readiness_scripts, 'readiness script should have been sent')
+        # JSON-serialized config embedded in the script
+        self.assertIn('"preset": "strict"', readiness_scripts[0])
+        self.assertIn('"stabilityWindowMs": 500', readiness_scripts[0])
+
+    def test_readiness_skipped_when_preset_disabled(self):
+        mock_healthcheck()
+        mock_snapshot()
+
+        with patch.object(self.driver, 'execute_async_script', wraps=self.driver.execute_async_script) as async_spy, \
+             patch.object(self.driver, 'execute_script', wraps=self.driver.execute_script) as sync_spy:
+            percy_snapshot(self.driver, 'readiness-disabled',
+                           readiness={'preset': 'disabled'})
+
+        async_scripts = [c.args[0] for c in async_spy.call_args_list if c.args]
+        sync_scripts = [c.args[0] for c in sync_spy.call_args_list if c.args]
+        self.assertFalse(any('waitForReady' in s for s in async_scripts),
+                         f'readiness script should NOT have been sent, got: {async_scripts}')
+        # Serialize still ran
+        self.assertTrue(any('PercyDOM.serialize' in s for s in sync_scripts))
+
+    def test_snapshot_still_posts_when_readiness_raises(self):
+        mock_healthcheck()
+        mock_snapshot()
+
+        # Make the readiness call raise; serialize should still run and the
+        # snapshot POST should still be made.
+        def explode(*args, **kwargs):
+            raise RuntimeError('readiness boom')
+
+        with patch.object(self.driver, 'execute_async_script', side_effect=explode):
+            percy_snapshot(self.driver, 'readiness-boom')
+
+        # Snapshot endpoint was hit
+        paths = [req.path for req in httpretty.latest_requests()]
+        self.assertIn('/percy/snapshot', paths)
+
 class TestPercyScreenshot(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
