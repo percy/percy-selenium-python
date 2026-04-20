@@ -199,6 +199,9 @@ def _wait_for_ready(driver, kwargs):
     method are a graceful no-op. Any failure is caught and logged at debug;
     serialize still runs.
 
+    Returns readiness diagnostics dict (or None) so callers can attach it
+    to the domSnapshot for CLI-side logging.
+
     Readiness config precedence: kwargs['readiness'] > cached
     percy.config.snapshot.readiness > {} (CLI falls back to balanced default).
     If preset is 'disabled', skip the async script call entirely.
@@ -211,9 +214,9 @@ def _wait_for_ready(driver, kwargs):
         else:
             readiness_config = {}
     if isinstance(readiness_config, dict) and readiness_config.get('preset') == 'disabled':
-        return
+        return None
     try:
-        driver.execute_async_script(
+        diagnostics = driver.execute_async_script(
             'var config = ' + json.dumps(readiness_config) + ';'
             'var done = arguments[arguments.length - 1];'
             'try {'
@@ -222,15 +225,20 @@ def _wait_for_ready(driver, kwargs):
             '  } else { done(); }'
             '} catch(e) { done(); }'
         )
+        return diagnostics
     except Exception as e:
         log(f'waitForReady failed, proceeding to serialize: {e}', 'debug')
+        return None
 
 
 def get_serialized_dom(driver, cookies, percy_dom_script=None, **kwargs):
     # 0. Readiness gate before serialize (PER-7348). Graceful on old CLI.
-    _wait_for_ready(driver, kwargs)
+    readiness_diagnostics = _wait_for_ready(driver, kwargs)
     # 1. Serialize the main page first (this adds the data-percy-element-ids)
     dom_snapshot = driver.execute_script(f'return PercyDOM.serialize({json.dumps(kwargs)})')
+    # Attach readiness diagnostics so the CLI can log timing and pass/fail
+    if readiness_diagnostics and isinstance(dom_snapshot, dict):
+        dom_snapshot['readiness_diagnostics'] = readiness_diagnostics
     # 2. Process CORS IFrames
     try:
         page_origin = _get_origin(driver.current_url)
