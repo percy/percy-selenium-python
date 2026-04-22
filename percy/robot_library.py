@@ -209,9 +209,20 @@ if ROBOT_AVAILABLE:
             ``consider_region_selenium_elements`` is a comma-separated list of
             SeleniumLibrary locators whose elements should be considered.
 
-            Example:
+            == Basic usage ==
             | Percy Screenshot    Homepage
+
+            == Ignore via SeleniumLibrary locators ==
             | Percy Screenshot    Login    ignore_region_selenium_elements=id:cookie-banner
+
+            == Ignore via Create Percy Region ==
+            | ${region}=    Create Percy Region    algorithm=ignore    element_xpath=//header
+            | Percy Screenshot    Homepage    options=${{json.dumps({"regions": [${region}]})}}
+
+            == Multiple regions ==
+            | ${ignore}=    Create Percy Region    algorithm=ignore    element_css=.ad-banner
+            | ${consider}=    Create Percy Region    algorithm=standard    element_css=.main-content
+            | Percy Screenshot    Page    options=${{json.dumps({"regions": [${ignore}, ${consider}]})}}
             """
             driver = self._get_driver()
             parsed_options = _parse_json(options) or {}
@@ -258,12 +269,25 @@ if ROBOT_AVAILABLE:
 
             ``padding`` is padding in pixels around the element.
 
-            Returns a region dict to pass to ``Percy Snapshot`` via ``regions``.
+            Returns a region dict to pass via ``regions`` (Percy Snapshot)
+            or ``options`` (Percy Screenshot).
 
-            Examples:
+            == Usage with Percy Snapshot (DOM) ==
             | ${region}=    Create Percy Region    algorithm=ignore    element_css=.ad-banner
-            | ${region}=    Create Percy Region    algorithm=standard
-            |    ...    element_xpath=//div[@id='dynamic']    diff_sensitivity=5
+            | Percy Snapshot    Homepage    regions=${{json.dumps([${region}])}}
+
+            == Usage with Percy Screenshot (Automate) ==
+            | ${region}=    Create Percy Region    algorithm=ignore    element_xpath=//div[@id='header']
+            | Percy Screenshot    Homepage    options=${{json.dumps({"regions": [${region}]})}}
+
+            == Multiple regions ==
+            | ${ignore}=    Create Percy Region    algorithm=ignore    element_css=h1
+            | ${consider}=    Create Percy Region    algorithm=standard    element_css=.content    diff_sensitivity=3
+            | Percy Snapshot    Mixed Regions    regions=${{json.dumps([${ignore}, ${consider}])}}
+
+            == With padding and bounding box ==
+            | ${region}=    Create Percy Region    algorithm=ignore    element_css=.banner    padding=10
+            | ${region}=    Create Percy Region    algorithm=ignore    bounding_box={"x":0,"y":0,"width":200,"height":100}
             """
             return create_region(
                 boundingBox=_parse_json(bounding_box),
