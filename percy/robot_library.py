@@ -242,17 +242,17 @@ if ROBOT_AVAILABLE:
             | ${region}=    Create Percy Region    algorithm=standard    element_xpath=//div[@id='dynamic']    diff_sensitivity=5
             """
             return create_region(
-                bounding_box=_parse_json(bounding_box),
-                element_xpath=element_xpath,
-                element_css=element_css,
+                boundingBox=_parse_json(bounding_box),
+                elementXpath=element_xpath,
+                elementCSS=element_css,
                 padding=int(padding) if padding else None,
                 algorithm=algorithm,
-                diff_sensitivity=int(diff_sensitivity) if diff_sensitivity else None,
-                image_ignore_threshold=float(image_ignore_threshold) if image_ignore_threshold else None,
-                carousels_enabled=_parse_bool(carousels_enabled),
-                banners_enabled=_parse_bool(banners_enabled),
-                ads_enabled=_parse_bool(ads_enabled),
-                diff_ignore_threshold=float(diff_ignore_threshold) if diff_ignore_threshold else None,
+                diffSensitivity=int(diff_sensitivity) if diff_sensitivity else None,
+                imageIgnoreThreshold=float(image_ignore_threshold) if image_ignore_threshold else None,
+                carouselsEnabled=_parse_bool(carousels_enabled),
+                bannersEnabled=_parse_bool(banners_enabled),
+                adsEnabled=_parse_bool(ads_enabled),
+                diffIgnoreThreshold=float(diff_ignore_threshold) if diff_ignore_threshold else None,
             )
 
         # --------------------------------------------------------------
