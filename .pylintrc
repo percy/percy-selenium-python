@@ -1,9 +1,11 @@
 [MASTER]
 fail-under=10.0
+ignore-patterns=.*\.robot$
 disable=
   broad-except,
   broad-exception-raised,
   global-statement,
+  import-error,
   invalid-name,
   missing-class-docstring,
   missing-function-docstring,
