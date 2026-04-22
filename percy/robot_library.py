@@ -160,7 +160,7 @@ if ROBOT_AVAILABLE:
                 enable_javascript=_parse_bool(enable_javascript),
                 enable_layout=_parse_bool(enable_layout),
                 disable_shadow_dom=_parse_bool(disable_shadow_dom),
-                labels=_parse_csv(labels),
+                labels=",".join(_parse_csv(labels)) if labels else None,
                 test_case=test_case,
                 sync=_parse_bool(sync),
                 regions=_parse_json(regions),
