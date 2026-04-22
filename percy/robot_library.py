@@ -73,6 +73,26 @@ def _parse_json(val):
     return None
 
 
+def _parse_padding(val):
+    """Convert padding to object format Percy expects."""
+    if not val:
+        return None
+    if isinstance(val, str):
+        try:
+            parsed = json.loads(val)
+            if isinstance(parsed, dict):
+                return parsed
+            val = int(val)
+        except (json.JSONDecodeError, ValueError):
+            return None
+    if isinstance(val, (int, float)):
+        p = int(val)
+        return {"top": p, "bottom": p, "left": p, "right": p}
+    if isinstance(val, dict):
+        return val
+    return None
+
+
 if ROBOT_AVAILABLE:
 
     @library(scope="GLOBAL")
@@ -249,7 +269,7 @@ if ROBOT_AVAILABLE:
                 boundingBox=_parse_json(bounding_box),
                 elementXpath=element_xpath,
                 elementCSS=element_css,
-                padding=int(padding) if padding else None,
+                padding=_parse_padding(padding),
                 algorithm=algorithm,
                 diffSensitivity=int(diff_sensitivity) if diff_sensitivity else None,
                 imageIgnoreThreshold=(
