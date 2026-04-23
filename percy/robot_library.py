@@ -21,20 +21,43 @@ Run with:
 """
 
 import json
+import platform
 
 try:
     from robot.api.deco import keyword, library
     from robot.libraries.BuiltIn import BuiltIn
+    import robot.version
     ROBOT_AVAILABLE = True
 except ImportError:
     ROBOT_AVAILABLE = False
 
+from percy import snapshot as _snapshot_module
 from percy.snapshot import (
     create_region,
     is_percy_enabled,
     percy_snapshot,
     percy_automate_screenshot,
 )
+from percy.version import __version__ as SDK_VERSION
+from selenium.webdriver import __version__ as SELENIUM_VERSION
+
+_ROBOT_CLIENT_INFO = None
+_ROBOT_ENV_INFO = None
+if ROBOT_AVAILABLE:
+    _ROBOT_CLIENT_INFO = f'percy-robotframework-selenium/{SDK_VERSION}'
+    _ROBOT_ENV_INFO = [
+        f'robotframework/{robot.version.VERSION}',
+        f'selenium/{SELENIUM_VERSION}',
+        f'python/{platform.python_version()}',
+    ]
+
+
+def _apply_robot_client_info():
+    """Override snapshot module client/env info for Robot Framework context."""
+    if _ROBOT_CLIENT_INFO:
+        _snapshot_module.CLIENT_INFO = _ROBOT_CLIENT_INFO
+    if _ROBOT_ENV_INFO:
+        _snapshot_module.ENV_INFO = _ROBOT_ENV_INFO
 
 
 def _parse_bool(val):
@@ -105,6 +128,9 @@ if ROBOT_AVAILABLE:
         Tests must be run under ``percy exec``:
         | percy exec -- robot tests/
         """
+
+        def __init__(self):
+            _apply_robot_client_info()
 
         def _get_driver(self):
             """Get the active Selenium WebDriver from SeleniumLibrary."""
