@@ -538,6 +538,42 @@ class TestPercySnapshot(unittest.TestCase):
         paths = [req.path for req in httpretty.latest_requests()]
         self.assertIn('/percy/snapshot', paths)
 
+    def test_readiness_diagnostics_attached_to_dom_snapshot(self):
+        mock_healthcheck()
+        mock_snapshot()
+
+        diagnostics = {
+            'passed': True,
+            'timed_out': False,
+            'preset': 'balanced',
+            'total_duration_ms': 84,
+            'checks': {}
+        }
+
+        # execute_async_script returns the readiness diagnostics dict (the SDK
+        # captures it). execute_script returns the serialize result. The SDK
+        # must merge diagnostics into the dom_snapshot dict before POSTing.
+        def fake_async(*args, **kwargs):
+            return diagnostics
+
+        def fake_sync(script, *args, **kwargs):
+            if 'PercyDOM.serialize' in script:
+                return {'html': '<html></html>'}
+            return None
+
+        with patch.object(self.driver, 'execute_async_script', side_effect=fake_async), \
+             patch.object(self.driver, 'execute_script', side_effect=fake_sync):
+            percy_snapshot(self.driver, 'readiness-diagnostics')
+
+        # Find the /percy/snapshot POST and assert its body carries the diag.
+        snapshot_req = next(
+            (r for r in httpretty.latest_requests() if r.path == '/percy/snapshot'),
+            None
+        )
+        self.assertIsNotNone(snapshot_req)
+        body = json.loads(snapshot_req.body.decode('utf-8'))
+        self.assertEqual(body['domSnapshot']['readiness_diagnostics'], diagnostics)
+
 class TestPercyScreenshot(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
