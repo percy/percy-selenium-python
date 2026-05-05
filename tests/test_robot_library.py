@@ -1,4 +1,5 @@
 """Tests for Robot Framework library integration."""
+import unittest
 from unittest.mock import MagicMock, patch
 
 from percy.robot_library import (
@@ -10,62 +11,62 @@ from percy.robot_library import (
 )
 
 
-def test_import_robot_library():
-    """robot_library should import without error."""
-    from percy import robot_library  # pylint: disable=import-outside-toplevel
-    assert hasattr(robot_library, 'PercyLibrary')
+class TestImports(unittest.TestCase):
+    def test_import_robot_library(self):
+        """robot_library should import without error."""
+        from percy import robot_library  # pylint: disable=import-outside-toplevel
+        self.assertTrue(hasattr(robot_library, 'PercyLibrary'))
+
+    def test_percy_library_exists(self):
+        """PercyLibrary should be importable from percy package."""
+        from percy import PercyLibrary as PL  # pylint: disable=import-outside-toplevel
+        self.assertIsNotNone(PL)
 
 
-def test_percy_library_exists():
-    """PercyLibrary should be importable from percy package."""
-    from percy import PercyLibrary as PL  # pylint: disable=import-outside-toplevel
-    assert PL is not None
-
-
-class TestParseHelpers:
+class TestParseHelpers(unittest.TestCase):
     def test_parse_bool_none(self):
-        assert _parse_bool(None) is None
+        self.assertIsNone(_parse_bool(None))
 
     def test_parse_bool_true(self):
-        assert _parse_bool("True") is True
-        assert _parse_bool("true") is True
-        assert _parse_bool("1") is True
-        assert _parse_bool("yes") is True
+        self.assertTrue(_parse_bool("True"))
+        self.assertTrue(_parse_bool("true"))
+        self.assertTrue(_parse_bool("1"))
+        self.assertTrue(_parse_bool("yes"))
 
     def test_parse_bool_false(self):
-        assert _parse_bool("False") is False
-        assert _parse_bool("false") is False
-        assert _parse_bool("0") is False
-        assert _parse_bool("no") is False
+        self.assertFalse(_parse_bool("False"))
+        self.assertFalse(_parse_bool("false"))
+        self.assertFalse(_parse_bool("0"))
+        self.assertFalse(_parse_bool("no"))
 
     def test_parse_widths_string(self):
-        assert _parse_widths("375,768,1280") == [375, 768, 1280]
+        self.assertEqual(_parse_widths("375,768,1280"), [375, 768, 1280])
 
     def test_parse_widths_list(self):
-        assert _parse_widths([375, 1280]) == [375, 1280]
+        self.assertEqual(_parse_widths([375, 1280]), [375, 1280])
 
     def test_parse_widths_none(self):
-        assert _parse_widths(None) is None
+        self.assertIsNone(_parse_widths(None))
 
     def test_parse_csv_string(self):
-        assert _parse_csv("regression, homepage, v2") == ["regression", "homepage", "v2"]
+        self.assertEqual(_parse_csv("regression, homepage, v2"), ["regression", "homepage", "v2"])
 
     def test_parse_csv_none(self):
-        assert _parse_csv(None) is None
+        self.assertIsNone(_parse_csv(None))
 
     def test_parse_json_string(self):
         result = _parse_json('{"fullPage": true}')
-        assert result == {"fullPage": True}
+        self.assertEqual(result, {"fullPage": True})
 
     def test_parse_json_dict(self):
         result = _parse_json({"key": "value"})
-        assert result == {"key": "value"}
+        self.assertEqual(result, {"key": "value"})
 
     def test_parse_json_none(self):
-        assert _parse_json(None) is None
+        self.assertIsNone(_parse_json(None))
 
 
-class TestPercyLibraryKeywords:
+class TestPercyLibraryKeywords(unittest.TestCase):
     @patch("percy.robot_library.percy_snapshot")
     @patch("percy.robot_library.BuiltIn")
     def test_percy_snapshot_keyword_basic(self, mock_builtin, mock_snapshot):
@@ -77,8 +78,8 @@ class TestPercyLibraryKeywords:
 
         mock_snapshot.assert_called_once()
         args = mock_snapshot.call_args
-        assert args[0][0] is mock_driver
-        assert args[0][1] == "Homepage"
+        self.assertIs(args[0][0], mock_driver)
+        self.assertEqual(args[0][1], "Homepage")
 
     @patch("percy.robot_library.percy_snapshot")
     @patch("percy.robot_library.BuiltIn")
@@ -98,20 +99,20 @@ class TestPercyLibraryKeywords:
 
         mock_snapshot.assert_called_once()
         call_kwargs = mock_snapshot.call_args[1]
-        assert call_kwargs["widths"] == [375, 1280]
-        assert call_kwargs["min_height"] == 1024
-        assert call_kwargs["percy_css"] == "h1 { color: red; }"
-        assert call_kwargs["enable_javascript"] is True
-        assert call_kwargs["labels"] == ["regression", "v2"]
+        self.assertEqual(call_kwargs["widths"], [375, 1280])
+        self.assertEqual(call_kwargs["min_height"], 1024)
+        self.assertEqual(call_kwargs["percy_css"], "h1 { color: red; }")
+        self.assertIs(call_kwargs["enable_javascript"], True)
+        self.assertEqual(call_kwargs["labels"], ["regression", "v2"])
 
     @patch("percy.robot_library.is_percy_enabled")
     def test_percy_is_running_keyword(self, mock_enabled):
         mock_enabled.return_value = {"session_type": "web", "config": {}}
         lib = PercyLibrary()
-        assert lib.percy_is_running_keyword() is True
+        self.assertIs(lib.percy_is_running_keyword(), True)
 
         mock_enabled.return_value = False
-        assert lib.percy_is_running_keyword() is False
+        self.assertIs(lib.percy_is_running_keyword(), False)
 
     @patch("percy.robot_library.create_region")
     def test_create_percy_region_keyword(self, mock_create):
@@ -120,4 +121,4 @@ class TestPercyLibraryKeywords:
         result = lib.create_percy_region_keyword(algorithm="ignore", element_css=".ad")
 
         mock_create.assert_called_once()
-        assert result["algorithm"] == "ignore"
+        self.assertEqual(result["algorithm"], "ignore")
