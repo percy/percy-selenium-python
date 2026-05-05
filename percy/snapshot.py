@@ -500,19 +500,23 @@ def percy_snapshot(driver, name, **kwargs):
         driver.execute_script(percy_dom_script)
         cookies = driver.get_cookies()
 
+        # Merge .percy.yml config options with snapshot options (snapshot options take priority)
+        config_options = data['config'].get('snapshot', {})
+        merged_kwargs = {**config_options, **kwargs}
+
         # Serialize and capture the DOM
-        if is_responsive_snapshot_capture(data['config'], **kwargs):
+        if is_responsive_snapshot_capture(data['config'], **merged_kwargs):
             dom_snapshot = capture_responsive_dom(
                 driver=driver,
                 cookies=cookies,
                 config=data['config'],
                 percy_dom_script=percy_dom_script,
-                **kwargs,
+                **merged_kwargs,
             )
         else:
             dom_snapshot = get_serialized_dom(
                 driver, cookies, percy_config=data.get('config'),
-                percy_dom_script=percy_dom_script, **kwargs)
+                percy_dom_script=percy_dom_script, **merged_kwargs)
 
         # Strip SDK-local `readiness` from the snapshot POST body. The CLI
         # already has it via healthcheck; sending it again here risks future
