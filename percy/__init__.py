@@ -2,6 +2,12 @@ from percy.version import __version__
 from percy.snapshot import percy_automate_screenshot
 from percy.exception import UnsupportedWebDriverException
 
+# Robot Framework support — graceful when robotframework is not installed
+try:
+    from percy.robot_library import PercyLibrary
+except ImportError:
+    pass
+
 # import snapshot command
 try:
     from percy.snapshot import percy_snapshot

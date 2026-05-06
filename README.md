@@ -195,3 +195,73 @@ $ percy exec -- [python test command]
 ```
 
 Refer to docs here: [Percy on Automate](https://www.browserstack.com/docs/percy/integrate/functional-and-visual)
+
+## Robot Framework Support
+
+This package includes built-in Robot Framework support. Install the additional dependencies:
+
+```sh-session
+$ pip install robotframework robotframework-seleniumlibrary
+```
+
+Then use `PercyLibrary` in your Robot tests:
+
+```robot
+*** Settings ***
+Library    SeleniumLibrary
+Library    percy.robot_library.PercyLibrary
+
+*** Test Cases ***
+Homepage Visual Test
+    Open Browser    https://example.com    chrome
+    Percy Snapshot    Homepage
+    Percy Snapshot    Responsive    widths=375,768,1280
+    Percy Snapshot    Tagged    labels=regression,v2
+    Close Browser
+```
+
+Run with `percy exec`:
+
+```sh-session
+$ percy exec -- robot tests/
+```
+
+### Robot Keywords
+
+#### Percy Snapshot
+
+`Percy Snapshot    name    [widths]    [min_height]    [percy_css]    [scope]    [enable_javascript]    [enable_layout]    [labels]    [regions]`
+
+- `name` (**required**) - The snapshot name; must be unique to each snapshot
+- `widths` - Comma-separated responsive widths (e.g., `375,768,1280`)
+- `min_height` - Minimum screenshot height in pixels
+- `percy_css` - Custom CSS to inject before snapshot
+- `scope` - CSS selector to limit the snapshot area
+- `enable_javascript` - Enable JS in Percy rendering (default: not set)
+- `enable_layout` - Enable layout comparison mode (default: not set)
+- `labels` - Comma-separated labels/tags (e.g., `regression,homepage`)
+- `test_case` - Test case identifier
+- `regions` - JSON string of region definitions (use `Create Percy Region`)
+- `responsive_snapshot_capture` - Enable responsive capture mode
+
+#### Percy Screenshot (Automate)
+
+`Percy Screenshot    name    [options]    [ignore_region_selenium_elements]    [consider_region_selenium_elements]`
+
+#### Create Percy Region
+
+`Create Percy Region    [algorithm]    [element_css]    [element_xpath]    [bounding_box]    [padding]`
+
+```robot
+${region}=    Create Percy Region    algorithm=ignore    element_css=.ad-banner
+Percy Snapshot    Homepage    regions=${{json.dumps([${region}])}}
+```
+
+#### Percy Is Running
+
+```robot
+${running}=    Percy Is Running
+Run Keyword If    ${running}    Percy Snapshot    Homepage
+```
+
+> Note: Robot Framework support is optional. If `robotframework` is not installed, the rest of `percy-selenium` works unchanged.
