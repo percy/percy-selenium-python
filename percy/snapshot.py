@@ -177,19 +177,110 @@ def process_frame(driver, frame_element, options, percy_dom_script):
     }
 
 
-def _is_unsupported_iframe_src(frame_src):
-    return (
-        not frame_src or
-        frame_src == "about:blank" or
-        frame_src.startswith("javascript:") or
-        frame_src.startswith("data:") or
-        frame_src.startswith("vbscript:")
+# ---------------------------------------------------------------------------
+# Inlined SDK helpers (mirrors @percy/sdk-utils used by Node SDKs). We do not
+# bump a shared utils package — selenium-python ships these directly so that
+# behavior stays in sync with percy-nightwatch / percy-webdriverio.
+# ---------------------------------------------------------------------------
+
+DEFAULT_MAX_FRAME_DEPTH = 5
+
+
+def is_unsupported_iframe_src(frame_src):
+    """True if a frame's src cannot be navigated/loaded for serialization."""
+    if not frame_src:
+        return True
+    unsupported_exact = ("about:blank", "about:srcdoc")
+    unsupported_prefixes = (
+        "javascript:", "data:", "vbscript:", "blob:",
+        "chrome:", "chrome-extension:", "about:"
     )
+    if frame_src in unsupported_exact:
+        return True
+    for prefix in unsupported_prefixes:
+        if frame_src.startswith(prefix):
+            return True
+    return False
+
+
+# Backwards-compatible private alias kept for any external callers.
+_is_unsupported_iframe_src = is_unsupported_iframe_src
+
+
+def get_origin(url):
+    """Return scheme://netloc for a URL, or None when parsing fails."""
+    try:
+        parsed = urlparse(url)
+        if not parsed.scheme or not parsed.netloc:
+            return None
+        return f"{parsed.scheme}://{parsed.netloc}"
+    except Exception:  # pylint: disable=broad-except
+        return None
 
 
 def _get_origin(url):
-    parsed = urlparse(url)
-    return f"{parsed.scheme}://{parsed.netloc}"
+    """Compat shim: previous Feature 1 code expected a non-None string."""
+    origin = get_origin(url)
+    return origin if origin is not None else ""
+
+
+def clamp_frame_depth(value, default_max=DEFAULT_MAX_FRAME_DEPTH):
+    """Clamp a user-provided depth into [1, default_max]."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default_max
+    if n < 1:
+        return 1
+    if n > default_max:
+        return default_max
+    return n
+
+
+def normalize_ignore_selectors(value):
+    """Accept str|list|None and return a clean list[str]."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, (list, tuple)):
+        return [s for s in value if isinstance(s, str) and s.strip()]
+    return []
+
+
+def resolve_max_frame_depth(options, percy_config):
+    """Read maxIframeDepth from per-snapshot options or percy.config.snapshot."""
+    options = options or {}
+    config = (percy_config or {}).get('snapshot', {}) if isinstance(percy_config, dict) else {}
+    raw = options.get('maxIframeDepth')
+    if raw is None:
+        raw = options.get('max_iframe_depth')
+    if raw is None:
+        raw = config.get('maxIframeDepth', DEFAULT_MAX_FRAME_DEPTH)
+    return clamp_frame_depth(raw)
+
+
+def resolve_ignore_selectors(options, percy_config):
+    """Read ignoreIframeSelectors from per-snapshot options or percy.config.snapshot."""
+    options = options or {}
+    config = (percy_config or {}).get('snapshot', {}) if isinstance(percy_config, dict) else {}
+    raw = options.get('ignoreIframeSelectors')
+    if raw is None:
+        raw = options.get('ignore_iframe_selectors')
+    if raw is None:
+        raw = config.get('ignoreIframeSelectors', [])
+    return normalize_ignore_selectors(raw)
+
+
+class PercyContextLost(Exception):
+    """Raised when an iframe-context switch goes wrong mid-traversal.
+
+    Carries any partial corsIframes capture already collected so the outer
+    caller can still emit a useful payload before bailing on the rest.
+    """
+    def __init__(self, message, partial_capture=None):
+        super().__init__(message)
+        self.partial_capture = partial_capture or []
 
 def get_serialized_dom(driver, cookies, percy_dom_script=None, **kwargs):
     # 1. Serialize the main page first (this adds the data-percy-element-ids)
