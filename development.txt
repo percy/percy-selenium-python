@@ -1,5 +1,5 @@
 httpretty==1.0.*
 pylint==2.*
 twine
-robotframework>=5.0
+robotframework>=7.4.2
 robotframework-seleniumlibrary>=5.0
