@@ -1495,6 +1495,97 @@ class TestIframeTreeBehavior(unittest.TestCase):
         self.assertNotIn("pid-b", pids)
 
 
+class TestExposeClosedShadowRoots(unittest.TestCase):
+    def test_noop_on_driver_without_cdp(self):
+        """A driver without execute_cdp_cmd is a silent no-op."""
+        class StubDriver:  # no execute_cdp_cmd
+            pass
+        # Should not raise
+        local.expose_closed_shadow_roots(StubDriver())
+
+    def test_noop_when_dom_enable_fails(self):
+        """If DOM.enable raises (non-Chromium), we exit silently before
+        anything else runs."""
+        driver = Mock()
+        driver.execute_cdp_cmd.side_effect = Exception("cdp not supported")
+        local.expose_closed_shadow_roots(driver)
+        # only the failed DOM.enable call happens
+        driver.execute_cdp_cmd.assert_called_once_with("DOM.enable", {})
+
+    def test_exposes_closed_roots_via_weakmap(self):
+        """When CDP returns a closed shadow root, exposeClosedShadowRoots
+        creates the WeakMap and calls Runtime.callFunctionOn to populate it."""
+        driver = Mock()
+        cdp_calls = []
+        def cdp(cmd, params):
+            cdp_calls.append(cmd)
+            if cmd == "DOM.enable":
+                return {}
+            if cmd == "DOM.getDocument":
+                return {
+                    "root": {
+                        "backendNodeId": 1,
+                        "shadowRoots": [],
+                        "children": [{
+                            "backendNodeId": 2,
+                            "shadowRoots": [{
+                                "backendNodeId": 3,
+                                "shadowRootType": "closed",
+                                "children": []
+                            }],
+                        }]
+                    }
+                }
+            if cmd == "DOM.resolveNode":
+                if params["backendNodeId"] == 2:
+                    return {"object": {"objectId": "host-obj"}}
+                if params["backendNodeId"] == 3:
+                    return {"object": {"objectId": "shadow-obj"}}
+            if cmd == "Runtime.callFunctionOn":
+                return {}
+            if cmd == "DOM.disable":
+                return {}
+            return {}
+        driver.execute_cdp_cmd.side_effect = cdp
+
+        local.expose_closed_shadow_roots(driver)
+
+        # WeakMap was created on the page
+        scripts = [c[0][0] for c in driver.execute_script.call_args_list]
+        self.assertTrue(any("__percyClosedShadowRoots" in s for s in scripts))
+        self.assertIn("Runtime.callFunctionOn", cdp_calls)
+        self.assertIn("DOM.resolveNode", cdp_calls)
+
+    def test_skips_content_document_subtrees(self):
+        """Closed shadow roots inside an iframe's contentDocument are not
+        exposed (their JS context is separate from the page main world)."""
+        driver = Mock()
+        def cdp(cmd, params):
+            if cmd == "DOM.getDocument":
+                return {
+                    "root": {
+                        "backendNodeId": 1,
+                        "children": [{
+                            "backendNodeId": 2,
+                            "contentDocument": {
+                                "backendNodeId": 100,
+                                "shadowRoots": [{
+                                    "backendNodeId": 101,
+                                    "shadowRootType": "closed",
+                                }],
+                            },
+                        }]
+                    }
+                }
+            return {}
+        driver.execute_cdp_cmd.side_effect = cdp
+        local.expose_closed_shadow_roots(driver)
+        # No Runtime.callFunctionOn — the closed root inside contentDocument
+        # was skipped, and execute_script for the WeakMap was never run.
+        scripts = [c[0][0] for c in driver.execute_script.call_args_list]
+        self.assertFalse(any("__percyClosedShadowRoots" in s for s in scripts))
+
+
 class TestCreateRegion(unittest.TestCase):
 
     def test_create_region_with_all_params(self):

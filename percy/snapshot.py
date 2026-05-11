@@ -435,9 +435,87 @@ def _capture_cors_iframes(driver, page_url, ctx):
         return []
 
 
-def expose_closed_shadow_roots(driver):  # pylint: disable=unused-argument
-    """Stub — closed shadow DOM capture is added in a follow-up commit."""
-    return
+def expose_closed_shadow_roots(driver):
+    """Use CDP to find every closed shadow root in the page and stash each
+    {host -> shadowRoot} pair in a WeakMap on ``window``. PercyDOM.serialize
+    reads from that map to capture closed-mode shadow DOM that would otherwise
+    be invisible to ordinary DOM traversal. Non-Chromium drivers will fail the
+    initial CDP call and we silently no-op.
+    """
+    if not hasattr(driver, 'execute_cdp_cmd'):
+        return
+    try:
+        driver.execute_cdp_cmd("DOM.enable", {})
+    except Exception as e:  # pylint: disable=broad-except
+        log(f"CDP unavailable for closed shadow DOM capture: {e}", "debug")
+        return
+    try:
+        doc = driver.execute_cdp_cmd(
+            "DOM.getDocument", {"depth": -1, "pierce": True}
+        )
+        root = doc.get("root") if isinstance(doc, dict) else None
+        closed_pairs = []
+
+        def walk(node):
+            # Skip nodes inside child frame documents — cross-frame closed
+            # shadow roots are not yet supported (their execution context
+            # lacks the WeakMap).
+            if not isinstance(node, dict) or node.get("contentDocument"):
+                return
+            shadow_roots = node.get("shadowRoots") or []
+            for sr in shadow_roots:
+                if sr.get("shadowRootType") == "closed":
+                    closed_pairs.append({
+                        "hostBackendNodeId": node.get("backendNodeId"),
+                        "shadowBackendNodeId": sr.get("backendNodeId")
+                    })
+                walk(sr)
+            for child in (node.get("children") or []):
+                walk(child)
+
+        if root:
+            walk(root)
+
+        if not closed_pairs:
+            return
+
+        log(f"Found {len(closed_pairs)} closed shadow root(s), exposing via CDP",
+            "debug")
+
+        # Create the WeakMap on the page (same key as PercyDOM looks up).
+        driver.execute_script(
+            "window.__percyClosedShadowRoots = "
+            "window.__percyClosedShadowRoots || new WeakMap();"
+        )
+
+        for pair in closed_pairs:
+            try:
+                host_obj = driver.execute_cdp_cmd(
+                    "DOM.resolveNode", {"backendNodeId": pair["hostBackendNodeId"]}
+                )
+                shadow_obj = driver.execute_cdp_cmd(
+                    "DOM.resolveNode", {"backendNodeId": pair["shadowBackendNodeId"]}
+                )
+                host_id = (host_obj.get("object") or {}).get("objectId")
+                shadow_id = (shadow_obj.get("object") or {}).get("objectId")
+                if not host_id or not shadow_id:
+                    continue
+                driver.execute_cdp_cmd("Runtime.callFunctionOn", {
+                    "functionDeclaration":
+                        "function(shadowRoot) {"
+                        " window.__percyClosedShadowRoots.set(this, shadowRoot); }",
+                    "objectId": host_id,
+                    "arguments": [{"objectId": shadow_id}]
+                })
+            except Exception as e:  # pylint: disable=broad-except
+                log(f"Failed to expose a closed shadow root via CDP: {e}", "debug")
+    except Exception as e:  # pylint: disable=broad-except
+        log(f"Could not expose closed shadow roots via CDP: {e}", "debug")
+    finally:
+        try:
+            driver.execute_cdp_cmd("DOM.disable", {})
+        except Exception:  # pylint: disable=broad-except
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -674,6 +752,9 @@ def capture_responsive_dom(driver, cookies, config, percy_dom_script=None, **kwa
             log(f'Reloading page for width: {width}', 'debug')
             driver.refresh()
             driver.execute_script(percy_dom_script)
+            # Re-prime closed shadow roots after the page reload — the WeakMap
+            # on window was destroyed when navigation happened.
+            expose_closed_shadow_roots(driver)
             _setup_resize_listener(driver)
             driver.execute_script("PercyDOM.waitForResize();")
             resize_count = 0 # Reset count because the listener just started fresh
@@ -712,6 +793,9 @@ def percy_snapshot(driver, name, **kwargs):
         # Inject the DOM serialization script
         percy_dom_script = fetch_percy_dom()
         driver.execute_script(percy_dom_script)
+        # Expose closed shadow roots via CDP before serialization so PercyDOM
+        # can find them through the WeakMap (Chromium-only; non-Chromium no-ops).
+        expose_closed_shadow_roots(driver)
         cookies = driver.get_cookies()
 
         # Serialize and capture the DOM
