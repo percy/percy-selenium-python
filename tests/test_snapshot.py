@@ -378,7 +378,12 @@ class TestPercySnapshot(unittest.TestCase):
 
         self.assertEqual(httpretty.last_request().path, '/percy/snapshot')
 
-        s1 = httpretty.latest_requests()[2].parsed_body
+        snap_bodies = [
+            r.parsed_body for r in httpretty.latest_requests()
+            if r.path == '/percy/snapshot' and r.method == 'POST'
+            and isinstance(r.parsed_body, dict)
+        ]
+        s1 = snap_bodies[0]
         self.assertEqual(s1['name'], 'Snapshot 1')
         self.assertEqual(s1['url'], 'http://localhost:8000/')
         self.assertEqual(s1['dom_snapshot'], expected_dom_snapshot)
@@ -391,15 +396,20 @@ class TestPercySnapshot(unittest.TestCase):
         driver = MockChrome.return_value
         # execute_script calls (reload=False):
         #  [0] inject percy_dom  [1] _setup_resize_listener  [2] waitForResize
-        #  [3] resize-check w375  [4] serialize w375
-        #  [5] resize-check w390  [6] serialize w390  [7] restore resize-check
+        #  [3] resize-check w375  [4] serialize w375  [5] enumerate iframes w375
+        #  [6] resize-check w390  [7] serialize w390  [8] enumerate iframes w390
+        #  [9] restore resize-check
         driver.execute_script.side_effect = [
-            '', '', None, 1, { 'html': 'some_dom' }, 2, { 'html': 'some_dom_1' }, 3
+            '', '', None,
+            1, { 'html': 'some_dom' }, [],
+            2, { 'html': 'some_dom_1' }, [],
+            3
         ]
         driver.get_cookies.return_value = ''
         driver.execute_cdp_cmd.return_value = ''
         driver.get_window_size.return_value = { 'height': 400, 'width': 800 }
-        # Return empty iframe list so CORS-iframe code path is skipped
+        # find_elements is no longer used by the iframe path; left for any
+        # legacy callers.
         driver.find_elements.return_value = []
         mock_logger()
         mock_healthcheck(widths = { "config": [375], "mobile": [390] })
@@ -425,12 +435,18 @@ class TestPercySnapshot(unittest.TestCase):
     def test_has_a_backwards_compatible_function(self):
         mock_healthcheck()
         mock_snapshot()
+        mock_logger()
 
         percySnapshot(browser=self.driver, name='Snapshot')
 
         self.assertEqual(httpretty.last_request().path, '/percy/snapshot')
 
-        s1 = httpretty.latest_requests()[2].parsed_body
+        snap_bodies = [
+            r.parsed_body for r in httpretty.latest_requests()
+            if r.path == '/percy/snapshot' and r.method == 'POST'
+            and isinstance(r.parsed_body, dict)
+        ]
+        s1 = snap_bodies[0]
         self.assertEqual(s1['name'], 'Snapshot')
         self.assertEqual(s1['url'], 'http://localhost:8000/')
         self.assertEqual(s1['dom_snapshot'], {
@@ -992,28 +1008,44 @@ class TestIframeCaptureUnit(unittest.TestCase):
 
         self.assertIsNone(result)
 
+    # ------------------------------------------------------------------
+    # Helpers for nested-frame-tree tests. The new flow drives iframe
+    # discovery via driver.execute_script(enumerate_iframes_script(...))
+    # which returns a list of metadata dicts (no real WebElements).
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _meta(src, percy_id, *, srcdoc=None, ignore=False, matches=False, index=0):
+        return {
+            "src": src,
+            "srcdoc": srcdoc,
+            "percyElementId": percy_id,
+            "dataPercyIgnore": ignore,
+            "matchesIgnoreSelector": matches,
+            "index": index,
+        }
+
     def test_get_serialized_dom_populates_cors_iframes(self):
         driver = Mock()
+        # execute_script call order:
+        #  [0] main serialize       [1] enumerate top-level iframes
+        #  [2] querySelector (find iframe by id)
+        #  [3] post-switch document.URL re-check
+        #  [4] inject PercyDOM in frame
+        #  [5] serialize the frame  [6] enumerate nested iframes (empty)
         driver.execute_script.side_effect = [
-            {
-                "html": '<html><body><iframe data-percy-element-id="cid-1"></iframe></body></html>',
-                "resources": [{"url": "https://cdn/main.css", "content": "m"}]},                            
+            {"html": '<html><iframe data-percy-element-id="cid-1"></iframe></html>',
+             "resources": [{"url": "https://cdn/main.css", "content": "m"}]},
+            [self._meta("http://main.example.com/inner", None),
+             self._meta("https://cross.example.com/page", "cid-1", index=1)],
+            Mock(name="iframe_element"),
+            "https://cross.example.com/page",
             None,
-            {
-                "html": "<iframe-html/>",
-                "resources": [{"url": "https://cdn/frame.css", "content": "f"}]},                          
+            {"snapshot": {"html": "<iframe-html/>",
+                          "resources": [{"url": "https://cdn/frame.css", "content": "f"}]},
+             "frameUrl": "https://cross.example.com/page"},
+            [],
         ]
         driver.current_url = "http://main.example.com/"
-
-        same_origin_frame = Mock()
-        same_origin_frame.get_attribute = lambda attr: (
-            "http://main.example.com/inner" if attr == 'src' else None
-        )
-        cross_origin_frame = Mock()
-        cross_origin_frame.get_attribute = lambda attr: (
-            "https://cross.example.com/page" if attr == 'src' else "cid-1"
-        )
-        driver.find_elements.return_value = [same_origin_frame, cross_origin_frame]
 
         dom = local.get_serialized_dom(driver, [], percy_dom_script="some_script")
 
@@ -1023,22 +1055,17 @@ class TestIframeCaptureUnit(unittest.TestCase):
         self.assertEqual(entry["iframeData"]["percyElementId"], "cid-1")
         self.assertEqual(entry["iframeSnapshot"]["html"], "<iframe-html/>")
         self.assertEqual(entry["frameUrl"], "https://cross.example.com/page")
-        # HTML is left unchanged (no srcdoc injection here — core handles that)
         self.assertNotIn("srcdoc", dom["html"])
 
     def test_get_serialized_dom_skips_blank_src_frames(self):
         """Frames with no src or src='about:blank' are not processed."""
         driver = Mock()
-        driver.execute_script.return_value = {
-            "html": '<html><body><iframe></iframe></body></html>'
-        }
+        driver.execute_script.side_effect = [
+            {"html": '<html><body><iframe></iframe></body></html>'},
+            [self._meta("about:blank", None),
+             self._meta("", None, index=1)],
+        ]
         driver.current_url = "http://main.example.com/"
-
-        blank_frame = Mock()
-        blank_frame.get_attribute = lambda attr: ("about:blank" if attr == 'src' else None)
-        no_src_frame = Mock()
-        no_src_frame.get_attribute = lambda attr: (None if attr == 'src' else None)
-        driver.find_elements.return_value = [blank_frame, no_src_frame]
 
         dom = local.get_serialized_dom(driver, [], percy_dom_script="some_script")
 
@@ -1052,12 +1079,6 @@ class TestIframeCaptureUnit(unittest.TestCase):
         }
         driver.current_url = "http://main.example.com/"
 
-        cross_origin_frame = Mock()
-        cross_origin_frame.get_attribute = lambda attr: (
-            "https://cross.example.com/page" if attr == 'src' else "cid-1"
-        )
-        driver.find_elements.return_value = [cross_origin_frame]
-
         dom = local.get_serialized_dom(driver, [], percy_dom_script=None)
 
         self.assertNotIn("corsIframes", dom)
@@ -1065,32 +1086,27 @@ class TestIframeCaptureUnit(unittest.TestCase):
     def test_get_serialized_dom_cookies_always_attached(self):
         """Cookies are always added to the dom_snapshot regardless of iframes."""
         driver = Mock()
-        driver.execute_script.return_value = {"html": "<html/>"}
+        driver.execute_script.side_effect = [{"html": "<html/>"}, []]
         driver.current_url = "http://main.example.com/"
-        driver.find_elements.return_value = []
 
         cookies = [{"name": "session", "value": "abc"}]
-        dom = local.get_serialized_dom(driver, cookies)
+        dom = local.get_serialized_dom(driver, cookies, percy_dom_script="script")
 
         self.assertEqual(dom["cookies"], cookies)
 
     def test_get_serialized_dom_same_host_different_scheme_is_cross_origin(self):
-        """http://example.com and https://example.com differ in scheme → cross-origin.
-        Previously the netloc-only check would miss this; the origin-based check catches it."""
+        """http://example.com vs https://example.com → cross-origin."""
         driver = Mock()
         driver.execute_script.side_effect = [
             {"html": '<html><iframe data-percy-element-id="percy-id-1"></iframe></html>'},
-            None,                   # percy_dom inject into frame
-            {"html": "<frame/>"},   # frame serialize
+            [self._meta("https://main.example.com/widget", "percy-id-1")],
+            Mock(),
+            "https://main.example.com/widget",
+            None,
+            {"snapshot": {"html": "<frame/>"}, "frameUrl": "https://main.example.com/widget"},
+            [],
         ]
         driver.current_url = "http://main.example.com/"
-
-        # Same host, DIFFERENT scheme — should be treated as cross-origin
-        https_frame = Mock()
-        https_frame.get_attribute = lambda attr: (
-            "https://main.example.com/widget" if attr == 'src' else "percy-id-1"
-        )
-        driver.find_elements.return_value = [https_frame]
 
         dom = local.get_serialized_dom(driver, [], percy_dom_script="script")
 
@@ -1098,20 +1114,19 @@ class TestIframeCaptureUnit(unittest.TestCase):
         self.assertEqual(dom["corsIframes"][0]["iframeSnapshot"]["html"], "<frame/>")
 
     def test_get_serialized_dom_same_host_different_port_is_cross_origin(self):
-        """http://example.com:3000 and http://example.com:4000 differ in port → cross-origin."""
+        """http://example.com:3000 vs http://example.com:4000 → cross-origin."""
         driver = Mock()
         driver.execute_script.side_effect = [
             {"html": '<html><iframe data-percy-element-id="percy-id-port"></iframe></html>'},
+            [self._meta("http://main.example.com:4000/widget", "percy-id-port")],
+            Mock(),
+            "http://main.example.com:4000/widget",
             None,
-            {"html": "<frame/>"},
+            {"snapshot": {"html": "<frame/>"},
+             "frameUrl": "http://main.example.com:4000/widget"},
+            [],
         ]
         driver.current_url = "http://main.example.com:3000/"
-
-        diff_port_frame = Mock()
-        diff_port_frame.get_attribute = lambda attr: (
-            "http://main.example.com:4000/widget" if attr == 'src' else "percy-id-port"
-        )
-        driver.find_elements.return_value = [diff_port_frame]
 
         dom = local.get_serialized_dom(driver, [], percy_dom_script="script")
 
@@ -1119,16 +1134,13 @@ class TestIframeCaptureUnit(unittest.TestCase):
         self.assertEqual(dom["corsIframes"][0]["iframeSnapshot"]["html"], "<frame/>")
 
     def test_get_serialized_dom_same_origin_is_not_cross_origin(self):
-        """http://main.example.com/page1 and http://main.example.com/page2 share origin."""
+        """Same-origin iframes are skipped before any frame switch."""
         driver = Mock()
-        driver.execute_script.return_value = {"html": "<html/>"}
+        driver.execute_script.side_effect = [
+            {"html": "<html/>"},
+            [self._meta("http://main.example.com/inner.html", "percy-id-same")],
+        ]
         driver.current_url = "http://main.example.com/"
-
-        same_origin_frame = Mock()
-        same_origin_frame.get_attribute = lambda attr: (
-            "http://main.example.com/inner.html" if attr == 'src' else "percy-id-same"
-        )
-        driver.find_elements.return_value = [same_origin_frame]
 
         dom = local.get_serialized_dom(driver, [], percy_dom_script="script")
 
@@ -1175,15 +1187,16 @@ class TestIframeCaptureUnit(unittest.TestCase):
         driver = Mock()
         driver.execute_script.side_effect = [
             {"html": dom_html, "resources": []},
+            [self._meta("https://cross.example.com/page", "cid-1")],
+            Mock(),
+            "https://cross.example.com/page",
             None,
-            {"html": '<html><body><h1>Frame</h1></body></html>', "resources": [frame_resource]},
+            {"snapshot": {"html": '<html><body><h1>Frame</h1></body></html>',
+                          "resources": [frame_resource]},
+             "frameUrl": "https://cross.example.com/page"},
+            [],
         ]
         driver.current_url = "http://main.example.com/"
-        frame = Mock()
-        frame.get_attribute = lambda attr: (
-            "https://cross.example.com/page" if attr == 'src' else "cid-1"
-        )
-        driver.find_elements.return_value = [frame]
 
         dom = local.get_serialized_dom(driver, [], percy_dom_script="some_script")
 
@@ -1198,29 +1211,22 @@ class TestIframeCaptureUnit(unittest.TestCase):
         """All cross-origin frames are collected; same-origin frames are skipped."""
         driver = Mock()
         driver.execute_script.side_effect = [
-            {
-                "html": '<html><iframe data-percy-element-id="pid-1"></iframe>'
-                        '<iframe data-percy-element-id="pid-2"></iframe>'
-                        '<iframe data-percy-element-id="pid-same"></iframe></html>'
-            },
-            None, {"html": "<frame1/>"},
-            None, {"html": "<frame2/>"},
+            {"html": '<html><iframe data-percy-element-id="pid-1"></iframe>'
+                     '<iframe data-percy-element-id="pid-2"></iframe>'
+                     '<iframe data-percy-element-id="pid-same"></iframe></html>'},
+            [self._meta("https://a.other.com/w1", "pid-1"),
+             self._meta("http://main.example.com/inner", "pid-same", index=1),
+             self._meta("https://b.other.com/w2", "pid-2", index=2)],
+            # frame 1
+            Mock(), "https://a.other.com/w1", None,
+            {"snapshot": {"html": "<frame1/>"}, "frameUrl": "https://a.other.com/w1"},
+            [],
+            # frame 2
+            Mock(), "https://b.other.com/w2", None,
+            {"snapshot": {"html": "<frame2/>"}, "frameUrl": "https://b.other.com/w2"},
+            [],
         ]
         driver.current_url = "http://main.example.com/"
-
-        frame1 = Mock()
-        frame1.get_attribute = lambda attr: (
-            "https://a.other.com/w1" if attr == 'src' else "pid-1"
-        )
-        frame2 = Mock()
-        frame2.get_attribute = lambda attr: (
-            "https://b.other.com/w2" if attr == 'src' else "pid-2"
-        )
-        same_origin = Mock()
-        same_origin.get_attribute = lambda attr: (
-            "http://main.example.com/inner" if attr == 'src' else "pid-same"
-        )
-        driver.find_elements.return_value = [frame1, same_origin, frame2]
 
         dom = local.get_serialized_dom(driver, [], percy_dom_script="script")
 
@@ -1231,13 +1237,15 @@ class TestIframeCaptureUnit(unittest.TestCase):
         self.assertIn("pid-2", pids)
         self.assertNotIn("pid-same", pids)
 
-    def test_get_serialized_dom_handles_find_elements_exception(self):
-        """If find_elements raises, the error is swallowed, cookies are still attached,
-        and DOM stitching is skipped."""
+    def test_get_serialized_dom_handles_enumerate_exception(self):
+        """If iframe enumeration raises, the error is swallowed, cookies are still
+        attached, and CORS iframe stitching is skipped."""
         driver = Mock()
-        driver.execute_script.return_value = {"html": "<html/>"}
+        driver.execute_script.side_effect = [
+            {"html": "<html/>"},
+            Exception("enumerate error"),
+        ]
         driver.current_url = "http://main.example.com/"
-        driver.find_elements.side_effect = Exception("find error")
 
         dom = local.get_serialized_dom(driver, [{"name": "k", "value": "v"}],
                                        percy_dom_script="script")
@@ -1248,34 +1256,243 @@ class TestIframeCaptureUnit(unittest.TestCase):
     def test_get_serialized_dom_process_frame_failure_is_skipped(self):
         """If a cross-origin frame fails to process, it is omitted and the rest succeed."""
         driver = Mock()
-        # Calls: main serialize, fail-frame inject (raises), ok-frame inject, ok-frame serialize
         driver.execute_script.side_effect = [
-            {
-                "html": '<html><iframe data-percy-element-id="pid-fail"></iframe>'
-                        '<iframe data-percy-element-id="pid-ok"></iframe></html>'
-            },
-            Exception("inject failed"),  # fail_frame injection raises
-            None,                        # ok_frame inject
-            {"html": "<ok/>"},           # ok_frame serialize
+            {"html": '<html><iframe data-percy-element-id="pid-fail"></iframe>'
+                     '<iframe data-percy-element-id="pid-ok"></iframe></html>'},
+            [self._meta("https://fail.example.com/page", "pid-fail"),
+             self._meta("https://ok.example.com/page", "pid-ok", index=1)],
+            # fail frame: querySelector returns, document.URL ok, inject raises
+            Mock(), "https://fail.example.com/page", Exception("inject failed"),
+            # ok frame
+            Mock(), "https://ok.example.com/page", None,
+            {"snapshot": {"html": "<ok/>"}, "frameUrl": "https://ok.example.com/page"},
+            [],
         ]
         driver.current_url = "http://main.example.com/"
-
-        fail_frame = Mock()
-        fail_frame.get_attribute = lambda attr: (
-            "https://fail.example.com/page" if attr == 'src' else "pid-fail"
-        )
-        ok_frame = Mock()
-        ok_frame.get_attribute = lambda attr: (
-            "https://ok.example.com/page" if attr == 'src' else "pid-ok"
-        )
-        driver.find_elements.return_value = [fail_frame, ok_frame]
-
+        # switch_to.frame succeeds for both; parent_frame called in finally
         dom = local.get_serialized_dom(driver, [], percy_dom_script="script")
 
         self.assertIn("corsIframes", dom)
         self.assertEqual(len(dom["corsIframes"]), 1)
         self.assertEqual(dom["corsIframes"][0]["iframeData"]["percyElementId"], "pid-ok")
         self.assertEqual(dom["corsIframes"][0]["iframeSnapshot"]["html"], "<ok/>")
+
+
+class TestIframeHelpers(unittest.TestCase):
+    """Unit tests for the inlined sdk-utils helpers."""
+
+    def test_is_unsupported_iframe_src_truthy_cases(self):
+        for src in [None, '', 'about:blank', 'about:srcdoc', 'javascript:alert(1)',
+                    'data:text/html;base64,', 'blob:http://foo', 'chrome://settings',
+                    'vbscript:msg']:
+            self.assertTrue(local.is_unsupported_iframe_src(src), msg=src)
+
+    def test_is_unsupported_iframe_src_falsy_cases(self):
+        for src in ['http://x', 'https://x.example.com/p', 'http://x.example.com:8080/']:
+            self.assertFalse(local.is_unsupported_iframe_src(src), msg=src)
+
+    def test_clamp_frame_depth_bounds(self):
+        self.assertEqual(local.clamp_frame_depth(0), 1)
+        self.assertEqual(local.clamp_frame_depth(-3), 1)
+        self.assertEqual(local.clamp_frame_depth(1), 1)
+        self.assertEqual(local.clamp_frame_depth(3), 3)
+        self.assertEqual(local.clamp_frame_depth(5), 5)
+        self.assertEqual(local.clamp_frame_depth(99), local.DEFAULT_MAX_FRAME_DEPTH)
+        self.assertEqual(local.clamp_frame_depth("not-a-number"), local.DEFAULT_MAX_FRAME_DEPTH)
+        self.assertEqual(local.clamp_frame_depth(None), local.DEFAULT_MAX_FRAME_DEPTH)
+
+    def test_normalize_ignore_selectors(self):
+        self.assertEqual(local.normalize_ignore_selectors(None), [])
+        self.assertEqual(local.normalize_ignore_selectors(''), [])
+        self.assertEqual(local.normalize_ignore_selectors('  '), [])
+        self.assertEqual(local.normalize_ignore_selectors('.x'), ['.x'])
+        self.assertEqual(local.normalize_ignore_selectors(['.x', '', None, '.y']),
+                         ['.x', '.y'])
+        self.assertEqual(local.normalize_ignore_selectors(123), [])
+
+    def test_resolve_max_frame_depth_precedence(self):
+        # options camel takes precedence
+        self.assertEqual(local.resolve_max_frame_depth(
+            {'maxIframeDepth': 2}, {'snapshot': {'maxIframeDepth': 4}}), 2)
+        # options snake works
+        self.assertEqual(local.resolve_max_frame_depth(
+            {'max_iframe_depth': 3}, None), 3)
+        # falls back to config
+        self.assertEqual(local.resolve_max_frame_depth(
+            {}, {'snapshot': {'maxIframeDepth': 4}}), 4)
+        # defaults when nothing
+        self.assertEqual(local.resolve_max_frame_depth({}, {}),
+                         local.DEFAULT_MAX_FRAME_DEPTH)
+
+    def test_resolve_ignore_selectors_precedence(self):
+        self.assertEqual(local.resolve_ignore_selectors(
+            {'ignoreIframeSelectors': '.a'}, None), ['.a'])
+        self.assertEqual(local.resolve_ignore_selectors(
+            {'ignore_iframe_selectors': ['.b', '.c']}, None), ['.b', '.c'])
+        self.assertEqual(local.resolve_ignore_selectors(
+            {}, {'snapshot': {'ignoreIframeSelectors': ['.d']}}), ['.d'])
+        self.assertEqual(local.resolve_ignore_selectors({}, {}), [])
+
+    def test_enumerate_iframes_script_embeds_selectors(self):
+        script = local.enumerate_iframes_script(['.a', '.b'])
+        self.assertIn('".a"', script)
+        self.assertIn('".b"', script)
+        self.assertIn('querySelectorAll(\'iframe\')', script)
+        self.assertIn('data-percy-element-id', script)
+        self.assertIn("hasAttribute('data-percy-ignore')", script)
+
+    def test_enumerate_iframes_script_with_no_selectors(self):
+        script = local.enumerate_iframes_script(None)
+        self.assertIn('= [];', script)
+
+
+class TestIframeTreeBehavior(unittest.TestCase):
+    """Tests exercising the depth cap, cycle guard, ignore attrs, and selectors."""
+
+    @staticmethod
+    def _meta(src, percy_id, *, srcdoc=None, ignore=False, matches=False, index=0):
+        return {
+            "src": src,
+            "srcdoc": srcdoc,
+            "percyElementId": percy_id,
+            "dataPercyIgnore": ignore,
+            "matchesIgnoreSelector": matches,
+            "index": index,
+        }
+
+    def test_data_percy_ignore_attribute_skips_frame(self):
+        """An iframe carrying data-percy-ignore is dropped before any switch."""
+        driver = Mock()
+        driver.execute_script.side_effect = [
+            {"html": "<html/>"},
+            [self._meta("https://cross.example.com/p", "pid-1", ignore=True)],
+        ]
+        driver.current_url = "http://main.example.com/"
+
+        dom = local.get_serialized_dom(driver, [], percy_dom_script="script")
+        self.assertNotIn("corsIframes", dom)
+
+    def test_ignore_iframe_selectors_option_skips_matched_frame(self):
+        """A frame whose `matchesIgnoreSelector` was set by the enumerate
+        script is dropped. The selector list is forwarded into the JS."""
+        driver = Mock()
+        driver.execute_script.side_effect = [
+            {"html": "<html/>"},
+            [self._meta("https://cross.example.com/p", "pid-1", matches=True)],
+        ]
+        driver.current_url = "http://main.example.com/"
+
+        dom = local.get_serialized_dom(
+            driver, [], percy_dom_script="script",
+            ignoreIframeSelectors=['.ad', '.tracker']
+        )
+        self.assertNotIn("corsIframes", dom)
+
+        # The selectors must have been baked into the enumerate JS the SDK ran.
+        enumerate_call = driver.execute_script.call_args_list[1][0][0]
+        self.assertIn('".ad"', enumerate_call)
+        self.assertIn('".tracker"', enumerate_call)
+
+    def test_post_switch_url_recheck_drops_about_blank(self):
+        """If document.URL inside the frame becomes unsupported (about:blank,
+        net-error), drop the frame and do not serialize."""
+        driver = Mock()
+        driver.execute_script.side_effect = [
+            {"html": "<html/>"},
+            [self._meta("https://cross.example.com/p", "pid-1")],
+            Mock(),                  # querySelector for the iframe element
+            "about:blank",           # post-switch document.URL is unsupported
+        ]
+        driver.current_url = "http://main.example.com/"
+
+        dom = local.get_serialized_dom(driver, [], percy_dom_script="script")
+        self.assertNotIn("corsIframes", dom)
+        # parent_frame called in finally
+        driver.switch_to.parent_frame.assert_called_once()
+
+    def test_max_iframe_depth_caps_recursion(self):
+        """With maxIframeDepth=1, nested iframes are not entered."""
+        driver = Mock()
+        # Top-level frame at depth 1 is captured; nested children are skipped
+        # because depth+1 > max.
+        driver.execute_script.side_effect = [
+            {"html": "<html/>"},
+            [self._meta("https://a.example.com/", "pid-1")],
+            Mock(),
+            "https://a.example.com/",
+            None,
+            {"snapshot": {"html": "<a/>"}, "frameUrl": "https://a.example.com/"},
+        ]
+        driver.current_url = "http://main.example.com/"
+
+        dom = local.get_serialized_dom(
+            driver, [], percy_dom_script="script", maxIframeDepth=1
+        )
+        self.assertEqual(len(dom["corsIframes"]), 1)
+        # Only 6 execute_script calls — no nested-enumerate call.
+        self.assertEqual(driver.execute_script.call_count, 6)
+
+    def test_ancestor_cycle_guard_stops_descent(self):
+        """If a nested iframe's src appears in the ancestor chain, it is not
+        recursed into."""
+        driver = Mock()
+        driver.execute_script.side_effect = [
+            {"html": "<html/>"},
+            # top-level
+            [self._meta("https://a.example.com/", "pid-a")],
+            # switch into a
+            Mock(),
+            "https://a.example.com/",
+            None,
+            {"snapshot": {"html": "<a/>"}, "frameUrl": "https://a.example.com/"},
+            # nested enumeration inside a: cycles back to the page URL
+            [self._meta("http://main.example.com/", "pid-cycle")],
+        ]
+        driver.current_url = "http://main.example.com/"
+
+        dom = local.get_serialized_dom(driver, [], percy_dom_script="script")
+        self.assertEqual(len(dom["corsIframes"]), 1)
+        self.assertEqual(dom["corsIframes"][0]["iframeData"]["percyElementId"], "pid-a")
+
+    def test_percy_context_lost_preserves_partial_capture(self):
+        """If parent_frame() fails at depth > 1, raise PercyContextLost and have
+        the top-level walk include whatever was captured so far."""
+        driver = Mock()
+        # First top-level frame captures successfully and recurses; the nested
+        # frame raises on parent_frame, which surfaces as PercyContextLost.
+        driver.execute_script.side_effect = [
+            {"html": "<html/>"},
+            [self._meta("https://a.example.com/", "pid-a"),
+             self._meta("https://b.example.com/", "pid-b", index=1)],
+            # frame a
+            Mock(), "https://a.example.com/", None,
+            {"snapshot": {"html": "<a/>"}, "frameUrl": "https://a.example.com/"},
+            # nested enumeration inside a
+            [self._meta("https://c.example.com/", "pid-c")],
+            # frame c (nested)
+            Mock(), "https://c.example.com/", None,
+            {"snapshot": {"html": "<c/>"}, "frameUrl": "https://c.example.com/"},
+            [],
+        ]
+        driver.current_url = "http://main.example.com/"
+        # parent_frame fails on the *second* call (returning from c -> a).
+        call_count = {'n': 0}
+        def parent_frame_side_effect():
+            call_count['n'] += 1
+            if call_count['n'] == 1:
+                raise RuntimeError("lost context")
+            return None
+        driver.switch_to.parent_frame.side_effect = parent_frame_side_effect
+
+        dom = local.get_serialized_dom(driver, [], percy_dom_script="script")
+
+        self.assertIn("corsIframes", dom)
+        # The partial capture from inside frame a (a + c) must be preserved.
+        pids = [e["iframeData"]["percyElementId"] for e in dom["corsIframes"]]
+        self.assertIn("pid-a", pids)
+        self.assertIn("pid-c", pids)
+        # frame b must NOT have been processed — sibling iteration aborted.
+        self.assertNotIn("pid-b", pids)
 
 
 class TestCreateRegion(unittest.TestCase):
