@@ -1481,7 +1481,6 @@ class TestIframeTreeBehavior(unittest.TestCase):
             call_count['n'] += 1
             if call_count['n'] == 1:
                 raise RuntimeError("lost context")
-            return None
         driver.switch_to.parent_frame.side_effect = parent_frame_side_effect
 
         dom = local.get_serialized_dom(driver, [], percy_dom_script="script")
@@ -1498,7 +1497,8 @@ class TestIframeTreeBehavior(unittest.TestCase):
 class TestExposeClosedShadowRoots(unittest.TestCase):
     def test_noop_on_driver_without_cdp(self):
         """A driver without execute_cdp_cmd is a silent no-op."""
-        class StubDriver:  # no execute_cdp_cmd
+        class StubDriver:  # pylint: disable=too-few-public-methods
+            # no execute_cdp_cmd
             pass
         # Should not raise
         local.expose_closed_shadow_roots(StubDriver())
@@ -1517,7 +1517,7 @@ class TestExposeClosedShadowRoots(unittest.TestCase):
         creates the WeakMap and calls Runtime.callFunctionOn to populate it."""
         driver = Mock()
         cdp_calls = []
-        def cdp(cmd, params):
+        def cdp(cmd, params):  # pylint: disable=too-many-return-statements
             cdp_calls.append(cmd)
             if cmd == "DOM.enable":
                 return {}
@@ -1560,7 +1560,7 @@ class TestExposeClosedShadowRoots(unittest.TestCase):
         """Closed shadow roots inside an iframe's contentDocument are not
         exposed (their JS context is separate from the page main world)."""
         driver = Mock()
-        def cdp(cmd, params):
+        def cdp(cmd, _params):
             if cmd == "DOM.getDocument":
                 return {
                     "root": {

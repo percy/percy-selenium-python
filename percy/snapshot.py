@@ -214,6 +214,7 @@ def enumerate_iframes_script(selectors):
 
 
 def _should_skip_iframe(iframe, current_origin):
+    # pylint: disable=too-many-return-statements
     """Mirror of nightwatch's shouldSkipIframe — pure on the enumerated metadata."""
     if iframe.get('dataPercyIgnore'):
         log(f"Skipping iframe marked with data-percy-ignore: {iframe.get('src') or '(no src)'}",
@@ -245,6 +246,7 @@ def _should_skip_iframe(iframe, current_origin):
 
 
 def process_frame_tree(driver, iframe_meta, depth, ancestor_urls, ctx):
+    # pylint: disable=too-many-return-statements,too-many-statements
     """Recursively capture a cross-origin iframe and any nested cross-origin
     descendants. Bounded by ``ctx['max_frame_depth']`` to prevent runaway
     recursion when pages link to each other in cycles. ``ancestor_urls`` is the
@@ -388,7 +390,7 @@ def process_frame_tree(driver, iframe_meta, depth, ancestor_urls, ctx):
                     if captured_error is not None:
                         lost.__cause__ = captured_error
                     # pylint: disable=lost-exception
-                    raise lost  # noqa: B904
+                    raise lost from e  # noqa: B904
 
 
 def _capture_cors_iframes(driver, page_url, ctx):
