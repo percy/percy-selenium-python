@@ -531,12 +531,38 @@ class TestPercySnapshot(unittest.TestCase):
         def explode(*args, **kwargs):
             raise RuntimeError('readiness boom')
 
-        with patch.object(self.driver, 'execute_async_script', side_effect=explode):
+        with patch.object(self.driver, 'execute_async_script', side_effect=explode), \
+             patch.object(self.driver, 'execute_script', wraps=self.driver.execute_script) as sync_spy:
             percy_snapshot(self.driver, 'readiness-boom')
 
+        # Serialize must have actually run after the readiness exception —
+        # the whole point of the graceful-degradation path. Asserting only
+        # that /percy/snapshot was hit isn't enough; a regression could
+        # short-circuit serialize alongside readiness and still POST an
+        # empty/stale dom_snapshot.
+        sync_scripts = [c.args[0] for c in sync_spy.call_args_list if c.args]
+        self.assertTrue(any('PercyDOM.serialize' in s for s in sync_scripts),
+                        f'PercyDOM.serialize must run after readiness rejection, got: {sync_scripts}')
         # Snapshot endpoint was hit
         paths = [req.path for req in httpretty.latest_requests()]
         self.assertIn('/percy/snapshot', paths)
+
+    def test_snapshot_pops_readiness_from_post_body(self):
+        # `readiness` is SDK-local config — the CLI already has it via
+        # healthcheck. It should NOT round-trip through the snapshot POST.
+        mock_healthcheck()
+        mock_snapshot()
+
+        percy_snapshot(self.driver, 'readiness-no-leak',
+                       readiness={'preset': 'strict', 'stabilityWindowMs': 500})
+
+        snapshot_req = next(
+            (req for req in httpretty.latest_requests() if req.path == '/percy/snapshot'),
+            None)
+        self.assertIsNotNone(snapshot_req, 'expected /percy/snapshot POST')
+        body = json.loads(snapshot_req.body)
+        self.assertNotIn('readiness', body,
+                         f'`readiness` must not appear in snapshot POST body, got keys: {list(body.keys())}')
 
     def test_readiness_diagnostics_attached_to_dom_snapshot(self):
         mock_healthcheck()
