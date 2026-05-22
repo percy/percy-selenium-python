@@ -119,6 +119,7 @@ def mock_screenshot(fail=False, data=False):
         }),
         status=(500 if fail else 200))
 
+# pylint: disable=too-many-public-methods
 class TestPercySnapshot(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -478,25 +479,34 @@ class TestPercySnapshot(unittest.TestCase):
         mock_healthcheck()
         mock_snapshot()
 
-        with patch.object(self.driver, 'execute_async_script', wraps=self.driver.execute_async_script) as async_spy, \
-             patch.object(self.driver, 'execute_script', wraps=self.driver.execute_script) as sync_spy:
+        with patch.object(
+            self.driver, 'execute_async_script',
+            wraps=self.driver.execute_async_script
+        ) as async_spy, patch.object(
+            self.driver, 'execute_script',
+            wraps=self.driver.execute_script
+        ) as sync_spy:
             percy_snapshot(self.driver, 'readiness-happy-path')
 
         async_scripts = [c.args[0] for c in async_spy.call_args_list if c.args]
         sync_scripts = [c.args[0] for c in sync_spy.call_args_list if c.args]
-        # Readiness call made at least once, and contains the typeof guard + waitForReady
-        self.assertTrue(any('waitForReady' in s and 'typeof PercyDOM' in s for s in async_scripts),
-                        f'expected readiness script via execute_async_script, got: {async_scripts}')
-        # Serialize call made at least once via sync execute_script
-        self.assertTrue(any('PercyDOM.serialize' in s for s in sync_scripts),
-                        f'expected serialize via execute_script, got: {sync_scripts}')
+        # Readiness call made at least once, with the typeof guard + waitForReady
+        self.assertTrue(
+            any('waitForReady' in s and 'typeof PercyDOM' in s for s in async_scripts),
+            f'expected readiness script via execute_async_script, got: {async_scripts}')
+        self.assertTrue(
+            any('PercyDOM.serialize' in s for s in sync_scripts),
+            f'expected serialize via execute_script, got: {sync_scripts}')
 
     def test_readiness_uses_per_snapshot_config(self):
         mock_healthcheck()
         mock_snapshot()
 
         readiness = {'preset': 'strict', 'stabilityWindowMs': 500}
-        with patch.object(self.driver, 'execute_async_script', wraps=self.driver.execute_async_script) as async_spy:
+        with patch.object(
+            self.driver, 'execute_async_script',
+            wraps=self.driver.execute_async_script
+        ) as async_spy:
             percy_snapshot(self.driver, 'readiness-config', readiness=readiness)
 
         scripts = [c.args[0] for c in async_spy.call_args_list if c.args]
@@ -510,15 +520,21 @@ class TestPercySnapshot(unittest.TestCase):
         mock_healthcheck()
         mock_snapshot()
 
-        with patch.object(self.driver, 'execute_async_script', wraps=self.driver.execute_async_script) as async_spy, \
-             patch.object(self.driver, 'execute_script', wraps=self.driver.execute_script) as sync_spy:
+        with patch.object(
+            self.driver, 'execute_async_script',
+            wraps=self.driver.execute_async_script
+        ) as async_spy, patch.object(
+            self.driver, 'execute_script',
+            wraps=self.driver.execute_script
+        ) as sync_spy:
             percy_snapshot(self.driver, 'readiness-disabled',
                            readiness={'preset': 'disabled'})
 
         async_scripts = [c.args[0] for c in async_spy.call_args_list if c.args]
         sync_scripts = [c.args[0] for c in sync_spy.call_args_list if c.args]
-        self.assertFalse(any('waitForReady' in s for s in async_scripts),
-                         f'readiness script should NOT have been sent, got: {async_scripts}')
+        self.assertFalse(
+            any('waitForReady' in s for s in async_scripts),
+            f'readiness script should NOT have been sent, got: {async_scripts}')
         # Serialize still ran
         self.assertTrue(any('PercyDOM.serialize' in s for s in sync_scripts))
 
@@ -531,38 +547,48 @@ class TestPercySnapshot(unittest.TestCase):
         def explode(*args, **kwargs):
             raise RuntimeError('readiness boom')
 
-        with patch.object(self.driver, 'execute_async_script', side_effect=explode), \
-             patch.object(self.driver, 'execute_script', wraps=self.driver.execute_script) as sync_spy:
+        with patch.object(
+            self.driver, 'execute_async_script', side_effect=explode
+        ), patch.object(
+            self.driver, 'execute_script',
+            wraps=self.driver.execute_script
+        ) as sync_spy:
             percy_snapshot(self.driver, 'readiness-boom')
 
-        # Serialize must have actually run after the readiness exception —
+        # Serialize must have actually run after the readiness exception --
         # the whole point of the graceful-degradation path. Asserting only
         # that /percy/snapshot was hit isn't enough; a regression could
         # short-circuit serialize alongside readiness and still POST an
         # empty/stale dom_snapshot.
         sync_scripts = [c.args[0] for c in sync_spy.call_args_list if c.args]
-        self.assertTrue(any('PercyDOM.serialize' in s for s in sync_scripts),
-                        f'PercyDOM.serialize must run after readiness rejection, got: {sync_scripts}')
+        self.assertTrue(
+            any('PercyDOM.serialize' in s for s in sync_scripts),
+            'PercyDOM.serialize must run after readiness rejection, '
+            f'got: {sync_scripts}')
         # Snapshot endpoint was hit
         paths = [req.path for req in httpretty.latest_requests()]
         self.assertIn('/percy/snapshot', paths)
 
     def test_snapshot_pops_readiness_from_post_body(self):
-        # `readiness` is SDK-local config — the CLI already has it via
+        # `readiness` is SDK-local config -- the CLI already has it via
         # healthcheck. It should NOT round-trip through the snapshot POST.
         mock_healthcheck()
         mock_snapshot()
 
         percy_snapshot(self.driver, 'readiness-no-leak',
-                       readiness={'preset': 'strict', 'stabilityWindowMs': 500})
+                       readiness={'preset': 'strict',
+                                  'stabilityWindowMs': 500})
 
         snapshot_req = next(
-            (req for req in httpretty.latest_requests() if req.path == '/percy/snapshot'),
+            (req for req in httpretty.latest_requests()
+             if req.path == '/percy/snapshot'),
             None)
         self.assertIsNotNone(snapshot_req, 'expected /percy/snapshot POST')
         body = json.loads(snapshot_req.body)
-        self.assertNotIn('readiness', body,
-                         f'`readiness` must not appear in snapshot POST body, got keys: {list(body.keys())}')
+        self.assertNotIn(
+            'readiness', body,
+            '`readiness` must not appear in snapshot POST body, '
+            f'got keys: {list(body.keys())}')
 
     def test_readiness_diagnostics_attached_to_dom_snapshot(self):
         mock_healthcheck()
@@ -579,6 +605,7 @@ class TestPercySnapshot(unittest.TestCase):
         # execute_async_script returns the readiness diagnostics dict (the SDK
         # captures it). execute_script returns the serialize result. The SDK
         # must merge diagnostics into the dom_snapshot dict before POSTing.
+        # pylint: disable=unused-argument
         def fake_async(*args, **kwargs):
             return diagnostics
 

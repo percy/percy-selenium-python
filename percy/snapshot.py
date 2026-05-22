@@ -248,8 +248,11 @@ def _wait_for_ready(driver, percy_config, kwargs):
             'var config = ' + json.dumps(readiness_config) + ';'
             'var done = arguments[arguments.length - 1];'
             'try {'
-            "  if (typeof PercyDOM !== 'undefined' && typeof PercyDOM.waitForReady === 'function') {"
-            '    PercyDOM.waitForReady(config).then(function(r){ done(r); }).catch(function(){ done(); });'
+            "  if (typeof PercyDOM !== 'undefined'"
+            "      && typeof PercyDOM.waitForReady === 'function') {"
+            '    PercyDOM.waitForReady(config)'
+            '      .then(function(r){ done(r); })'
+            '      .catch(function(){ done(); });'
             '  } else { done(); }'
             '} catch(e) { done(); }'
         )
