@@ -768,8 +768,13 @@ def capture_responsive_dom(driver, cookies, config, percy_dom_script=None, **kwa
         dom_snapshot['width'] = width
         print(f'Taken snapshot for width: {width}, height: {height}')
         dom_snapshots.append(dom_snapshot)
-    with open("output_file.json", "w", encoding="utf-8") as file_handle:
-        json.dump(dom_snapshots, file_handle, indent=4)
+    # Optional debug dump — gated to avoid polluting the user's CWD on every CI run.
+    if PERCY_DEBUG:
+        try:
+            with open("output_file.json", "w", encoding="utf-8") as file_handle:
+                json.dump(dom_snapshots, file_handle, indent=4)
+        except Exception as e:  # pylint: disable=broad-except
+            log(f"Could not write debug snapshot dump: {type(e).__name__}: {e}", "debug")
     change_window_dimension_and_wait(driver, current_width, current_height, resize_count + 1)
     return dom_snapshots
 
