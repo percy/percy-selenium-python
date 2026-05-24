@@ -1701,5 +1701,47 @@ class TestCreateRegion(unittest.TestCase):
         self.assertEqual(result, expected_result)
 
 
+class TestShouldSkipIframeOrdering(unittest.TestCase):
+    """Regression tests for the srcdoc-vs-unsupported-src ordering fix."""
+
+    def test_pure_srcdoc_iframe_with_empty_src_takes_srcdoc_branch(self):
+        """A pure-srcdoc iframe has empty src; the srcdoc branch must run BEFORE
+        the unsupported-src check so we route it the same way percy-nightwatch
+        does (inlined via PercyDOM.serialize)."""
+        with patch.object(local, 'log') as mock_log:
+            iframe = {
+                'src': '',
+                'srcdoc': '<p>hello</p>',
+                'percyElementId': 'pid-srcdoc',
+                'dataPercyIgnore': False,
+                'matchesIgnoreSelector': False,
+                'index': 3,
+            }
+            self.assertTrue(local._should_skip_iframe(
+                iframe, "http://main.example.com"))
+            # The skip reason must be the srcdoc branch, not 'unsupported src'.
+            messages = [c.args[0] for c in mock_log.call_args_list]
+            self.assertTrue(any("Skipping srcdoc iframe" in m for m in messages),
+                            f"Expected srcdoc skip reason, got: {messages}")
+            self.assertFalse(any("unsupported iframe src" in m for m in messages))
+
+    def test_srcdoc_with_supported_src_still_takes_srcdoc_branch(self):
+        """If a frame carries srcdoc AND a real src, srcdoc still wins —
+        the inlined HTML takes precedence over the cross-origin load."""
+        with patch.object(local, 'log') as mock_log:
+            iframe = {
+                'src': 'https://cross.example.com/page',
+                'srcdoc': '<p>doc</p>',
+                'percyElementId': 'pid-both',
+                'dataPercyIgnore': False,
+                'matchesIgnoreSelector': False,
+                'index': 0,
+            }
+            self.assertTrue(local._should_skip_iframe(
+                iframe, "http://main.example.com"))
+            messages = [c.args[0] for c in mock_log.call_args_list]
+            self.assertTrue(any("Skipping srcdoc iframe" in m for m in messages))
+
+
 if __name__ == '__main__':
     unittest.main()

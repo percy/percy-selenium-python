@@ -224,13 +224,17 @@ def _should_skip_iframe(iframe, current_origin):
         log(f"Skipping iframe matching ignoreIframeSelectors: "
             f"{iframe.get('src') or '(no src)'}", "debug")
         return True
+    # Check srcdoc BEFORE the src-emptiness check: a pure-srcdoc iframe has no
+    # src attribute, and we want it routed through the srcdoc-specific branch
+    # (where same-origin inlining handles it) rather than silently lumped under
+    # "unsupported src".
+    if iframe.get('srcdoc'):
+        log(f"Skipping srcdoc iframe at index {iframe.get('index')}", "debug")
+        return True
     src = iframe.get('src') or ''
     if not src or is_unsupported_iframe_src(src):
         if src:
             log(f"Skipping unsupported iframe src: {src}", "debug")
-        return True
-    if iframe.get('srcdoc'):
-        log(f"Skipping srcdoc iframe at index {iframe.get('index')}", "debug")
         return True
     frame_origin = get_origin(src)
     if not frame_origin:
