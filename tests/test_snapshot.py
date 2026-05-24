@@ -1743,5 +1743,46 @@ class TestShouldSkipIframeOrdering(unittest.TestCase):
             self.assertTrue(any("Skipping srcdoc iframe" in m for m in messages))
 
 
+class TestRedirectCycleGuardOnFrameUrl(unittest.TestCase):
+    """A frame whose static src differs from its resolved document.URL still
+    has to be caught by the cycle guard."""
+
+    @staticmethod
+    def _meta(src, percy_id, *, srcdoc=None, ignore=False, matches=False, index=0):
+        return {
+            "src": src, "srcdoc": srcdoc, "percyElementId": percy_id,
+            "dataPercyIgnore": ignore, "matchesIgnoreSelector": matches,
+            "index": index,
+        }
+
+    def test_redirect_chain_cycle_caught_on_frameUrl(self):
+        """page_url=B. Frame on page has src=A which redirects → document.URL=B.
+        The cycle must be detected via the post-switch frameUrl, not just src."""
+        driver = Mock()
+        # Calls in order:
+        # 0: main serialize
+        # 1: enumerate top-level iframes
+        # 2: querySelector for the iframe element
+        # 3: post-switch document.URL → resolves to the page URL (cycle!)
+        driver.execute_script.side_effect = [
+            {"html": "<html/>"},
+            [self._meta("https://a.example.com/redirector", "pid-a")],
+            Mock(name="iframe_element"),
+            "http://main.example.com/",   # resolved to page URL → cycle
+        ]
+        driver.current_url = "http://main.example.com/"
+
+        dom = local.get_serialized_dom(
+            driver, [], percy_dom_script="some_script"
+        )
+
+        # Frame was switched into and back out of, but never serialized.
+        self.assertNotIn("corsIframes", dom)
+        # We did the post-switch URL read (call #3 above) and then bailed —
+        # no PercyDOM.serialize on this frame, no nested enumeration.
+        self.assertEqual(driver.execute_script.call_count, 4)
+        driver.switch_to.parent_frame.assert_called_once()
+
+
 if __name__ == '__main__':
     unittest.main()

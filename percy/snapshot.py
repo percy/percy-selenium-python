@@ -274,6 +274,9 @@ def process_frame_tree(driver, iframe_meta, depth, ancestor_urls, ctx):
     collected = []
     switched_in = False
     captured_error = None
+    # Track the post-switch URL so we can also detect cycles where a frame's
+    # static src differs from its resolved document.URL (redirect chains).
+    inside_url = None
 
     try:
         log(f"Processing cross-origin iframe (depth {depth}): {iframe_meta.get('src')}",
@@ -308,6 +311,14 @@ def process_frame_tree(driver, iframe_meta, depth, ancestor_urls, ctx):
             inside_url = None
         if is_unsupported_iframe_src(inside_url):
             log(f"Skipping iframe (post-switch URL unsupported): {inside_url}", "debug")
+            return []
+        # Second cycle check, on the resolved document.URL. A redirect chain
+        # (src=A → 30x → B) wouldn't trip the pre-switch guard because the
+        # static src doesn't appear in ancestor_urls — but the post-switch URL
+        # would. Catch the cycle here before we serialize and recurse.
+        if ancestor_urls and inside_url and inside_url in ancestor_urls:
+            log(f"Skipping cyclic iframe ({inside_url} appears in ancestor chain "
+                "via redirect resolution)", "debug")
             return []
 
         # Inject PercyDOM and serialize. enableJavaScript is forced to True so
