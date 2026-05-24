@@ -1784,5 +1784,70 @@ class TestRedirectCycleGuardOnFrameUrl(unittest.TestCase):
         driver.switch_to.parent_frame.assert_called_once()
 
 
+class TestTopLevelIframeFailureLog(unittest.TestCase):
+    """When a depth==1 iframe fails to process, the user should see it at
+    info level (not buried at debug)."""
+
+    @staticmethod
+    def _meta(src, percy_id):
+        return {
+            "src": src, "srcdoc": None, "percyElementId": percy_id,
+            "dataPercyIgnore": False, "matchesIgnoreSelector": False,
+            "index": 0,
+        }
+
+    def test_depth1_failure_logs_at_info(self):
+        driver = Mock()
+        driver.execute_script.side_effect = [
+            {"html": "<html/>"},
+            [self._meta("https://cross.example.com/page", "pid-1")],
+            Mock(),                              # iframe element
+            "https://cross.example.com/page",    # post-switch document.URL
+            Exception("dom inject blew up"),     # injection of PercyDOM raises
+        ]
+        driver.current_url = "http://main.example.com/"
+
+        with patch.object(local, 'log') as mock_log:
+            local.get_serialized_dom(driver, [], percy_dom_script="script")
+
+        # One of the log calls must mention the failure AT info level.
+        failure_calls = [
+            c for c in mock_log.call_args_list
+            if "Failed to process cross-origin iframe" in c.args[0]
+        ]
+        self.assertEqual(len(failure_calls), 1, "expected exactly one failure log")
+        # Second positional arg, if present, is the level. Default is 'info'.
+        lvl = failure_calls[0].args[1] if len(failure_calls[0].args) > 1 \
+            else failure_calls[0].kwargs.get('lvl', 'info')
+        self.assertEqual(lvl, "info")
+
+    def test_nested_failure_stays_at_debug(self):
+        """Depth > 1 failures stay at debug to avoid log spam on chatty pages."""
+        driver = Mock()
+        driver.execute_script.side_effect = [
+            {"html": "<html/>"},
+            [self._meta("https://a.example.com/", "pid-a")],
+            Mock(), "https://a.example.com/", None,
+            {"snapshot": {"html": "<a/>"}, "frameUrl": "https://a.example.com/"},
+            # nested enumeration inside a returns a child
+            [self._meta("https://b.example.com/", "pid-b")],
+            # nested child blows up at injection
+            Mock(), "https://b.example.com/",
+            Exception("nested inject blew up"),
+        ]
+        driver.current_url = "http://main.example.com/"
+
+        with patch.object(local, 'log') as mock_log:
+            local.get_serialized_dom(driver, [], percy_dom_script="script")
+
+        nested_failures = [
+            c for c in mock_log.call_args_list
+            if "Failed to process cross-origin iframe https://b.example.com" in c.args[0]
+        ]
+        self.assertEqual(len(nested_failures), 1)
+        lvl = nested_failures[0].args[1] if len(nested_failures[0].args) > 1 else "info"
+        self.assertEqual(lvl, "debug")
+
+
 if __name__ == '__main__':
     unittest.main()

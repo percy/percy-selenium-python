@@ -378,8 +378,12 @@ def process_frame_tree(driver, iframe_meta, depth, ancestor_urls, ctx):
         err.partial_capture = collected
         raise
     except Exception as error:  # pylint: disable=broad-except
+        # Top-level (depth==1) failures mean a user-visible iframe didn't get
+        # captured. Surface those at info so users notice missing iframes; deeper
+        # nested failures stay at debug to avoid log spam in chatty pages.
+        failure_lvl = "info" if depth == 1 else "debug"
         log(f"Failed to process cross-origin iframe {iframe_meta.get('src')}: {error}",
-            "debug")
+            failure_lvl)
         captured_error = error
         return collected
     finally:
