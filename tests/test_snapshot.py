@@ -1849,5 +1849,62 @@ class TestTopLevelIframeFailureLog(unittest.TestCase):
         self.assertEqual(lvl, "debug")
 
 
+class TestIterativeShadowWalker(unittest.TestCase):
+    """The closed-shadow walker must handle very deep trees without
+    RecursionError, which the outer except would otherwise swallow."""
+
+    def test_deeply_nested_tree_does_not_raise_recursion_error(self):
+        # Build a deep linear chain well beyond CPython's default recursion
+        # limit (~1000). Recursive walker would RecursionError; iterative
+        # walker must finish cleanly.
+        deep = 3000
+        leaf = {"backendNodeId": deep + 1, "shadowRoots": [], "children": []}
+        node = leaf
+        for i in range(deep, 0, -1):
+            node = {
+                "backendNodeId": i,
+                "shadowRoots": [],
+                "children": [node],
+            }
+        # Plant one closed shadow root deep in the tree so we can assert it
+        # was discovered.
+        cursor = node
+        for _ in range(deep // 2):
+            cursor = cursor["children"][0]
+        cursor["shadowRoots"] = [{
+            "backendNodeId": 999999,
+            "shadowRootType": "closed",
+            "children": [],
+        }]
+
+        driver = Mock()
+        def cdp(cmd, params):
+            if cmd == "DOM.enable":
+                return {}
+            if cmd == "DOM.getDocument":
+                return {"root": node}
+            if cmd == "DOM.resolveNode":
+                return {"object": {"objectId": f"obj-{params.get('backendNodeId')}"}}
+            if cmd == "Runtime.callFunctionOn":
+                return {}
+            if cmd == "DOM.disable":
+                return {}
+            return {}
+        driver.execute_cdp_cmd.side_effect = cdp
+
+        # If the walker were still recursive this would silently no-op (the
+        # broad except swallows RecursionError). With the iterative walker we
+        # must actually see the WeakMap script + the Runtime.callFunctionOn
+        # call for the planted closed shadow root.
+        local.expose_closed_shadow_roots(driver)
+
+        scripts = [c.args[0] for c in driver.execute_script.call_args_list]
+        self.assertTrue(any("__percyClosedShadowRoots" in s for s in scripts),
+                        "WeakMap script must have run — walker did not find "
+                        "the deeply nested closed shadow root")
+        cdp_cmds = [c.args[0] for c in driver.execute_cdp_cmd.call_args_list]
+        self.assertIn("Runtime.callFunctionOn", cdp_cmds)
+
+
 if __name__ == '__main__':
     unittest.main()

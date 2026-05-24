@@ -457,6 +457,7 @@ def _capture_cors_iframes(driver, page_url, ctx):
 
 
 def expose_closed_shadow_roots(driver):
+    # pylint: disable=too-many-nested-blocks
     """Use CDP to find every closed shadow root in the page and stash each
     {host -> shadowRoot} pair in a WeakMap on ``window``. PercyDOM.serialize
     reads from that map to capture closed-mode shadow DOM that would otherwise
@@ -477,25 +478,30 @@ def expose_closed_shadow_roots(driver):
         root = doc.get("root") if isinstance(doc, dict) else None
         closed_pairs = []
 
-        def walk(node):
-            # Skip nodes inside child frame documents — cross-frame closed
-            # shadow roots are not yet supported (their execution context
-            # lacks the WeakMap).
-            if not isinstance(node, dict) or node.get("contentDocument"):
-                return
-            shadow_roots = node.get("shadowRoots") or []
-            for sr in shadow_roots:
-                if sr.get("shadowRootType") == "closed":
-                    closed_pairs.append({
-                        "hostBackendNodeId": node.get("backendNodeId"),
-                        "shadowBackendNodeId": sr.get("backendNodeId")
-                    })
-                walk(sr)
-            for child in (node.get("children") or []):
-                walk(child)
-
+        # Iterative walker. Recursive Python on a very deep DOM blows past
+        # CPython's recursion limit (~1000) and raises RecursionError, which
+        # the outer broad-except would silently swallow — meaning a deep page
+        # would just lose closed-shadow exposure with no diagnostic. A stack
+        # keeps memory bounded by tree breadth instead of tree depth.
         if root:
-            walk(root)
+            stack = [root]
+            while stack:
+                node = stack.pop()
+                # Skip nodes inside child frame documents — cross-frame closed
+                # shadow roots are not yet supported (their execution context
+                # lacks the WeakMap).
+                if not isinstance(node, dict) or node.get("contentDocument"):
+                    continue
+                shadow_roots = node.get("shadowRoots") or []
+                for sr in shadow_roots:
+                    if sr.get("shadowRootType") == "closed":
+                        closed_pairs.append({
+                            "hostBackendNodeId": node.get("backendNodeId"),
+                            "shadowBackendNodeId": sr.get("backendNodeId")
+                        })
+                    stack.append(sr)
+                for child in (node.get("children") or []):
+                    stack.append(child)
 
         if not closed_pairs:
             return
