@@ -243,18 +243,28 @@ def _wait_for_ready(driver, percy_config, kwargs):
             driver.set_script_timeout(timeout_ms / 1000 + 2)  # +2s buffer
         except Exception:
             previous_timeout = None  # older Selenium / unsupported — best effort
+    # JS-side hard timeout: geckodriver does not reliably honor selenium's
+    # script_timeout for async scripts whose pending work lives in microtasks
+    # (Promise.then chains), so tests can hang indefinitely. Wrap done() in
+    # a once-only guard and arm a setTimeout that calls it after the
+    # readiness deadline + 2s buffer, regardless of what waitForReady does.
+    deadline_ms = int((timeout_ms if isinstance(timeout_ms, (int, float)) and timeout_ms > 0
+                       else 10000) + 2000)
     try:
         diagnostics = driver.execute_async_script(
             'var config = ' + json.dumps(readiness_config) + ';'
             'var done = arguments[arguments.length - 1];'
+            'var doneFired = false;'
+            'function fireDone(v) { if (doneFired) return; doneFired = true; done(v); }'
+            'setTimeout(function() { fireDone(); }, ' + str(deadline_ms) + ');'
             'try {'
             "  if (typeof PercyDOM !== 'undefined'"
             "      && typeof PercyDOM.waitForReady === 'function') {"
             '    PercyDOM.waitForReady(config)'
-            '      .then(function(r){ done(r); })'
-            '      .catch(function(){ done(); });'
-            '  } else { done(); }'
-            '} catch(e) { done(); }'
+            '      .then(function(r){ fireDone(r); })'
+            '      .catch(function(){ fireDone(); });'
+            '  } else { fireDone(); }'
+            '} catch(e) { fireDone(); }'
         )
         return diagnostics
     except Exception as e:
