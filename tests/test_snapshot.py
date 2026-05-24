@@ -1702,6 +1702,7 @@ class TestCreateRegion(unittest.TestCase):
 
 
 class TestShouldSkipIframeOrdering(unittest.TestCase):
+    # pylint: disable=protected-access
     """Regression tests for the srcdoc-vs-unsupported-src ordering fix."""
 
     def test_pure_srcdoc_iframe_with_empty_src_takes_srcdoc_branch(self):
