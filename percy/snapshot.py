@@ -229,6 +229,15 @@ def _wait_for_ready(driver, percy_config, kwargs):
     here, both for clarity and to avoid surprise dependencies on the cache.
     """
     readiness_config = _resolve_readiness_config(percy_config, kwargs)
+    # Opt-in only: skip the readiness gate entirely when the merged config
+    # is empty (no per-snapshot readiness kwarg, no global .percy.yml config).
+    # Geckodriver has a history of hanging on async scripts whose callbacks
+    # are delivered via microtasks, and the bare execute_async_script call
+    # itself has hung tests for hours in CI even when the embedded JS calls
+    # done() synchronously. Until that's root-caused, default-skip; users
+    # opt in via `readiness={...}` or .percy.yml.
+    if not readiness_config:
+        return None
     if readiness_config.get('preset') == 'disabled':
         return None
     # Match readiness.timeoutMs to the driver's async-script timeout so a

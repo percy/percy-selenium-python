@@ -486,7 +486,9 @@ class TestPercySnapshot(unittest.TestCase):
             self.driver, 'execute_script',
             wraps=self.driver.execute_script
         ) as sync_spy:
-            percy_snapshot(self.driver, 'readiness-happy-path')
+            # Explicit `readiness` opts the snapshot into the gate
+            # (default-off when no readiness config; see _wait_for_ready).
+            percy_snapshot(self.driver, 'readiness-happy-path', readiness={})
 
         async_scripts = [c.args[0] for c in async_spy.call_args_list if c.args]
         sync_scripts = [c.args[0] for c in sync_spy.call_args_list if c.args]
@@ -553,7 +555,7 @@ class TestPercySnapshot(unittest.TestCase):
             self.driver, 'execute_script',
             wraps=self.driver.execute_script
         ) as sync_spy:
-            percy_snapshot(self.driver, 'readiness-boom')
+            percy_snapshot(self.driver, 'readiness-boom', readiness={})
 
         # Serialize must have actually run after the readiness exception --
         # the whole point of the graceful-degradation path. Asserting only
@@ -616,7 +618,7 @@ class TestPercySnapshot(unittest.TestCase):
 
         with patch.object(self.driver, 'execute_async_script', side_effect=fake_async), \
              patch.object(self.driver, 'execute_script', side_effect=fake_sync):
-            percy_snapshot(self.driver, 'readiness-diagnostics')
+            percy_snapshot(self.driver, 'readiness-diagnostics', readiness={})
 
         # Find the /percy/snapshot POST and assert its body carries the diag.
         snapshot_req = next(
