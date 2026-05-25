@@ -479,20 +479,21 @@ class TestPercySnapshot(unittest.TestCase):
         mock_healthcheck()
         mock_snapshot()
 
+        # Stub execute_async_script via side_effect so we capture the call
+        # without invoking real geckodriver (which hangs CI when the async
+        # script returns synchronously via done()).
+        # pylint: disable=unused-argument
+        def fake_async(*args, **kwargs): return None
         with patch.object(
-            self.driver, 'execute_async_script',
-            wraps=self.driver.execute_async_script
+            self.driver, 'execute_async_script', side_effect=fake_async
         ) as async_spy, patch.object(
             self.driver, 'execute_script',
             wraps=self.driver.execute_script
         ) as sync_spy:
-            # Explicit `readiness` opts the snapshot into the gate
-            # (default-off when no readiness config; see _wait_for_ready).
             percy_snapshot(self.driver, 'readiness-happy-path', readiness={})
 
         async_scripts = [c.args[0] for c in async_spy.call_args_list if c.args]
         sync_scripts = [c.args[0] for c in sync_spy.call_args_list if c.args]
-        # Readiness call made at least once, with the typeof guard + waitForReady
         self.assertTrue(
             any('waitForReady' in s and 'typeof PercyDOM' in s for s in async_scripts),
             f'expected readiness script via execute_async_script, got: {async_scripts}')
@@ -505,9 +506,10 @@ class TestPercySnapshot(unittest.TestCase):
         mock_snapshot()
 
         readiness = {'preset': 'strict', 'stabilityWindowMs': 500}
+        # pylint: disable=unused-argument
+        def fake_async(*args, **kwargs): return None
         with patch.object(
-            self.driver, 'execute_async_script',
-            wraps=self.driver.execute_async_script
+            self.driver, 'execute_async_script', side_effect=fake_async
         ) as async_spy:
             percy_snapshot(self.driver, 'readiness-config', readiness=readiness)
 
@@ -522,9 +524,10 @@ class TestPercySnapshot(unittest.TestCase):
         mock_healthcheck()
         mock_snapshot()
 
+        # pylint: disable=unused-argument
+        def fake_async(*args, **kwargs): return None
         with patch.object(
-            self.driver, 'execute_async_script',
-            wraps=self.driver.execute_async_script
+            self.driver, 'execute_async_script', side_effect=fake_async
         ) as async_spy, patch.object(
             self.driver, 'execute_script',
             wraps=self.driver.execute_script
