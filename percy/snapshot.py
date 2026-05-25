@@ -228,10 +228,6 @@ def _wait_for_ready(driver, percy_config, kwargs):
     payload they already have in scope) — we don't re-call the cached lookup
     here, both for clarity and to avoid surprise dependencies on the cache.
     """
-    # Diagnostic: temporarily make _wait_for_ready an absolute no-op to
-    # isolate whether the hang is in this function or elsewhere.
-    return None
-    # pylint: disable=unreachable
     has_explicit_kwarg = 'readiness' in kwargs
     has_global_config = bool(
         (percy_config or {}).get('snapshot', {}).get('readiness')
