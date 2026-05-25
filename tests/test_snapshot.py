@@ -580,9 +580,17 @@ class TestPercySnapshot(unittest.TestCase):
         mock_healthcheck()
         mock_snapshot()
 
-        percy_snapshot(self.driver, 'readiness-no-leak',
-                       readiness={'preset': 'strict',
-                                  'stabilityWindowMs': 500})
+        # Stub execute_async_script via side_effect so we don't invoke real
+        # geckodriver (which hangs CI when the async script returns
+        # synchronously via done()).
+        # pylint: disable=unused-argument
+        def fake_async(*args, **kwargs): return None
+        with patch.object(
+            self.driver, 'execute_async_script', side_effect=fake_async
+        ):
+            percy_snapshot(self.driver, 'readiness-no-leak',
+                           readiness={'preset': 'strict',
+                                      'stabilityWindowMs': 500})
 
         snapshot_req = next(
             (req for req in httpretty.latest_requests()

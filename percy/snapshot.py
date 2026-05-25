@@ -235,10 +235,6 @@ def _wait_for_ready(driver, percy_config, kwargs):
     if not has_explicit_kwarg and not has_global_config:
         return None
     readiness_config = _resolve_readiness_config(percy_config, kwargs)
-    # Diagnostic: early return AFTER _resolve_readiness_config but BEFORE
-    # any driver call.
-    return None
-    # pylint: disable=unreachable
     if readiness_config.get('preset') == 'disabled':
         return None
     # Match readiness.timeoutMs to the driver's async-script timeout so a
