@@ -228,12 +228,10 @@ def _wait_for_ready(driver, percy_config, kwargs):
     payload they already have in scope) — we don't re-call the cached lookup
     here, both for clarity and to avoid surprise dependencies on the cache.
     """
-    # Opt-in only: skip the readiness gate entirely unless the caller
-    # either passed a `readiness` kwarg or set one in .percy.yml. Geckodriver
-    # has a history of hanging on async scripts whose callbacks arrive via
-    # microtasks, and the bare execute_async_script call has hung CI for
-    # hours even when the embedded JS calls done() synchronously. Until
-    # that's root-caused, default-skip.
+    # Diagnostic: temporarily make _wait_for_ready an absolute no-op to
+    # isolate whether the hang is in this function or elsewhere.
+    return None
+    # pylint: disable=unreachable
     has_explicit_kwarg = 'readiness' in kwargs
     has_global_config = bool(
         (percy_config or {}).get('snapshot', {}).get('readiness')
