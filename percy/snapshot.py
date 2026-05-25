@@ -209,7 +209,7 @@ def _resolve_readiness_config(percy_config, kwargs):
 
 
 def _wait_for_ready(driver, percy_config, kwargs):
-    """Run readiness checks before serialize. PER-7348.
+    """Run readiness checks before serialize.
 
     Sends PercyDOM.waitForReady via execute_async_script. The script checks
     typeof PercyDOM.waitForReady in-browser so older CLI versions without the
@@ -295,7 +295,7 @@ def _wait_for_ready(driver, percy_config, kwargs):
 
 def get_serialized_dom(driver, cookies, percy_config=None, percy_dom_script=None,
                        skip_readiness=False, readiness_diagnostics=None, **kwargs):
-    # 0. Readiness gate before serialize (PER-7348). Graceful on old CLI.
+    # 0. Readiness gate before serialize. Graceful on old CLI.
     #    `skip_readiness` lets responsive capture run readiness once before the
     #    width loop and pass diagnostics through, instead of paying the cost
     #    per width.

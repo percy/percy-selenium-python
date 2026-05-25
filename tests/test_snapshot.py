@@ -473,7 +473,7 @@ class TestPercySnapshot(unittest.TestCase):
         " For more information on usage of PercyScreenshot, refer https://www.browserstack.com"\
         "/docs/percy/integrate/functional-and-visual", str(context.exception))
 
-    # --- Readiness gate (PER-7348) ---------------------------------------
+    # --- Readiness gate ---------------------------------------
     # Skipped in CI: even with execute_async_script mocked via side_effect,
     # something in the readiness call path hangs Firefox/geckodriver under
     # GitHub Actions for hours. The orchestration is identical to the JS SDKs
@@ -481,7 +481,7 @@ class TestPercySnapshot(unittest.TestCase):
     # opt-in check guards every non-readiness test from going down this path
     # in production. Revisit when we have a reliable way to reproduce.
 
-    @unittest.skip("PER-7348: hangs CI; orchestration covered in sdk-utils")
+    @unittest.skip("hangs CI; orchestration covered in sdk-utils")
     def test_readiness_runs_before_serialize_by_default(self):
         mock_healthcheck()
         mock_snapshot()
@@ -508,7 +508,7 @@ class TestPercySnapshot(unittest.TestCase):
             any('PercyDOM.serialize' in s for s in sync_scripts),
             f'expected serialize via execute_script, got: {sync_scripts}')
 
-    @unittest.skip("PER-7348: hangs CI; orchestration covered in sdk-utils")
+    @unittest.skip("hangs CI; orchestration covered in sdk-utils")
     def test_readiness_uses_per_snapshot_config(self):
         mock_healthcheck()
         mock_snapshot()
@@ -528,7 +528,7 @@ class TestPercySnapshot(unittest.TestCase):
         self.assertIn('"preset": "strict"', readiness_scripts[0])
         self.assertIn('"stabilityWindowMs": 500', readiness_scripts[0])
 
-    @unittest.skip("PER-7348: hangs CI; orchestration covered in sdk-utils")
+    @unittest.skip("hangs CI; orchestration covered in sdk-utils")
     def test_readiness_skipped_when_preset_disabled(self):
         mock_healthcheck()
         mock_snapshot()
@@ -552,7 +552,7 @@ class TestPercySnapshot(unittest.TestCase):
         # Serialize still ran
         self.assertTrue(any('PercyDOM.serialize' in s for s in sync_scripts))
 
-    @unittest.skip("PER-7348: hangs CI; orchestration covered in sdk-utils")
+    @unittest.skip("hangs CI; orchestration covered in sdk-utils")
     def test_snapshot_still_posts_when_readiness_raises(self):
         mock_healthcheck()
         mock_snapshot()
@@ -584,7 +584,7 @@ class TestPercySnapshot(unittest.TestCase):
         paths = [req.path for req in httpretty.latest_requests()]
         self.assertIn('/percy/snapshot', paths)
 
-    @unittest.skip("PER-7348: hangs CI; orchestration covered in sdk-utils")
+    @unittest.skip("hangs CI; orchestration covered in sdk-utils")
     def test_snapshot_pops_readiness_from_post_body(self):
         # `readiness` is SDK-local config -- the CLI already has it via
         # healthcheck. It should NOT round-trip through the snapshot POST.
@@ -614,7 +614,7 @@ class TestPercySnapshot(unittest.TestCase):
             '`readiness` must not appear in snapshot POST body, '
             f'got keys: {list(body.keys())}')
 
-    @unittest.skip("PER-7348: hangs CI; orchestration covered in sdk-utils")
+    @unittest.skip("hangs CI; orchestration covered in sdk-utils")
     def test_readiness_diagnostics_attached_to_dom_snapshot(self):
         mock_healthcheck()
         mock_snapshot()
