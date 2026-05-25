@@ -473,175 +473,155 @@ class TestPercySnapshot(unittest.TestCase):
         " For more information on usage of PercyScreenshot, refer https://www.browserstack.com"\
         "/docs/percy/integrate/functional-and-visual", str(context.exception))
 
-    # --- Readiness gate ---------------------------------------
-    # Skipped in CI: even with execute_async_script mocked via side_effect,
-    # something in the readiness call path hangs Firefox/geckodriver under
-    # GitHub Actions for hours. The orchestration is identical to the JS SDKs
-    # (which have their own coverage via @percy/sdk-utils tests), and the
-    # opt-in check guards every non-readiness test from going down this path
-    # in production. Revisit when we have a reliable way to reproduce.
 
-    @unittest.skip("hangs CI; orchestration covered in sdk-utils")
-    def test_readiness_runs_before_serialize_by_default(self):
-        mock_healthcheck()
-        mock_snapshot()
+class TestReadinessGate(unittest.TestCase):
+    """Unit tests for _wait_for_ready / _resolve_readiness_config using a
+    fully-mocked WebDriver. Bypasses real geckodriver/Firefox traffic, so
+    cannot hang on real in-page observers like the integration-style tests
+    did."""
 
-        # Stub execute_async_script via side_effect so we capture the call
-        # without invoking real geckodriver (which hangs CI when the async
-        # script returns synchronously via done()).
-        # pylint: disable=unused-argument
-        def fake_async(*args, **kwargs): return None
-        with patch.object(
-            self.driver, 'execute_async_script', side_effect=fake_async
-        ) as async_spy, patch.object(
-            self.driver, 'execute_script',
-            wraps=self.driver.execute_script
-        ) as sync_spy:
-            percy_snapshot(self.driver, 'readiness-happy-path', readiness={})
+    def test_resolve_readiness_config_shallow_merges(self):
+        from percy.snapshot import _resolve_readiness_config
+        merged = _resolve_readiness_config(
+            {'snapshot': {'readiness': {'preset': 'balanced', 'timeoutMs': 8000}}},
+            {'readiness': {'stabilityWindowMs': 500}}
+        )
+        self.assertEqual(merged, {
+            'preset': 'balanced', 'timeoutMs': 8000, 'stabilityWindowMs': 500
+        })
 
-        async_scripts = [c.args[0] for c in async_spy.call_args_list if c.args]
-        sync_scripts = [c.args[0] for c in sync_spy.call_args_list if c.args]
-        self.assertTrue(
-            any('waitForReady' in s and 'typeof PercyDOM' in s for s in async_scripts),
-            f'expected readiness script via execute_async_script, got: {async_scripts}')
-        self.assertTrue(
-            any('PercyDOM.serialize' in s for s in sync_scripts),
-            f'expected serialize via execute_script, got: {sync_scripts}')
+    def test_resolve_readiness_config_per_snapshot_wins(self):
+        from percy.snapshot import _resolve_readiness_config
+        merged = _resolve_readiness_config(
+            {'snapshot': {'readiness': {'preset': 'balanced'}}},
+            {'readiness': {'preset': 'strict'}}
+        )
+        self.assertEqual(merged['preset'], 'strict')
 
-    @unittest.skip("hangs CI; orchestration covered in sdk-utils")
-    def test_readiness_uses_per_snapshot_config(self):
-        mock_healthcheck()
-        mock_snapshot()
+    def test_resolve_readiness_config_handles_none_snapshot(self):
+        from percy.snapshot import _resolve_readiness_config
+        merged = _resolve_readiness_config({'snapshot': None}, {})
+        self.assertEqual(merged, {})
 
-        readiness = {'preset': 'strict', 'stabilityWindowMs': 500}
-        # pylint: disable=unused-argument
-        def fake_async(*args, **kwargs): return None
-        with patch.object(
-            self.driver, 'execute_async_script', side_effect=fake_async
-        ) as async_spy:
-            percy_snapshot(self.driver, 'readiness-config', readiness=readiness)
+    def test_resolve_readiness_config_handles_non_dict_inputs(self):
+        from percy.snapshot import _resolve_readiness_config
+        merged = _resolve_readiness_config(
+            {'snapshot': {'readiness': 'not-a-dict'}},
+            {'readiness': 12345}
+        )
+        self.assertEqual(merged, {})
 
-        scripts = [c.args[0] for c in async_spy.call_args_list if c.args]
-        readiness_scripts = [s for s in scripts if 'waitForReady' in s]
-        self.assertTrue(readiness_scripts, 'readiness script should have been sent')
-        # JSON-serialized config embedded in the script
-        self.assertIn('"preset": "strict"', readiness_scripts[0])
-        self.assertIn('"stabilityWindowMs": 500', readiness_scripts[0])
+    def test_wait_for_ready_opt_in_skips_when_no_config(self):
+        from percy.snapshot import _wait_for_ready
+        driver = Mock()
+        result = _wait_for_ready(driver, percy_config={}, kwargs={})
+        self.assertIsNone(result)
+        driver.execute_async_script.assert_not_called()
 
-    @unittest.skip("hangs CI; orchestration covered in sdk-utils")
-    def test_readiness_skipped_when_preset_disabled(self):
-        mock_healthcheck()
-        mock_snapshot()
+    def test_wait_for_ready_runs_when_kwargs_opt_in(self):
+        from percy.snapshot import _wait_for_ready
+        diagnostics = {'passed': True, 'preset': 'balanced'}
+        driver = Mock()
+        driver.execute_async_script.return_value = diagnostics
+        driver.timeouts.script = 30
 
-        # pylint: disable=unused-argument
-        def fake_async(*args, **kwargs): return None
-        with patch.object(
-            self.driver, 'execute_async_script', side_effect=fake_async
-        ) as async_spy, patch.object(
-            self.driver, 'execute_script',
-            wraps=self.driver.execute_script
-        ) as sync_spy:
-            percy_snapshot(self.driver, 'readiness-disabled',
-                           readiness={'preset': 'disabled'})
+        result = _wait_for_ready(driver, percy_config={}, kwargs={'readiness': {}})
 
-        async_scripts = [c.args[0] for c in async_spy.call_args_list if c.args]
-        sync_scripts = [c.args[0] for c in sync_spy.call_args_list if c.args]
-        self.assertFalse(
-            any('waitForReady' in s for s in async_scripts),
-            f'readiness script should NOT have been sent, got: {async_scripts}')
-        # Serialize still ran
-        self.assertTrue(any('PercyDOM.serialize' in s for s in sync_scripts))
+        self.assertEqual(result, diagnostics)
+        self.assertEqual(driver.execute_async_script.call_count, 1)
+        script = driver.execute_async_script.call_args.args[0]
+        self.assertIn('PercyDOM.waitForReady', script)
+        self.assertIn('typeof PercyDOM', script)
 
-    @unittest.skip("hangs CI; orchestration covered in sdk-utils")
-    def test_snapshot_still_posts_when_readiness_raises(self):
-        mock_healthcheck()
-        mock_snapshot()
+    def test_wait_for_ready_runs_when_global_config_opts_in(self):
+        from percy.snapshot import _wait_for_ready
+        driver = Mock()
+        driver.execute_async_script.return_value = None
+        driver.timeouts.script = 30
+        percy_config = {'snapshot': {'readiness': {'preset': 'balanced'}}}
 
-        # Make the readiness call raise; serialize should still run and the
-        # snapshot POST should still be made.
-        def explode(*args, **kwargs):
-            raise RuntimeError('readiness boom')
+        _wait_for_ready(driver, percy_config=percy_config, kwargs={})
 
-        with patch.object(
-            self.driver, 'execute_async_script', side_effect=explode
-        ), patch.object(
-            self.driver, 'execute_script',
-            wraps=self.driver.execute_script
-        ) as sync_spy:
-            percy_snapshot(self.driver, 'readiness-boom', readiness={})
+        self.assertEqual(driver.execute_async_script.call_count, 1)
 
-        # Serialize must have actually run after the readiness exception --
-        # the whole point of the graceful-degradation path. Asserting only
-        # that /percy/snapshot was hit isn't enough; a regression could
-        # short-circuit serialize alongside readiness and still POST an
-        # empty/stale dom_snapshot.
-        sync_scripts = [c.args[0] for c in sync_spy.call_args_list if c.args]
-        self.assertTrue(
-            any('PercyDOM.serialize' in s for s in sync_scripts),
-            'PercyDOM.serialize must run after readiness rejection, '
-            f'got: {sync_scripts}')
-        # Snapshot endpoint was hit
-        paths = [req.path for req in httpretty.latest_requests()]
-        self.assertIn('/percy/snapshot', paths)
+    def test_wait_for_ready_skips_disabled_preset(self):
+        from percy.snapshot import _wait_for_ready
+        driver = Mock()
+        result = _wait_for_ready(
+            driver, percy_config={}, kwargs={'readiness': {'preset': 'disabled'}})
+        self.assertIsNone(result)
+        driver.execute_async_script.assert_not_called()
 
-    @unittest.skip("hangs CI; orchestration covered in sdk-utils")
-    def test_snapshot_pops_readiness_from_post_body(self):
-        # `readiness` is SDK-local config -- the CLI already has it via
-        # healthcheck. It should NOT round-trip through the snapshot POST.
-        mock_healthcheck()
-        mock_snapshot()
+    def test_wait_for_ready_inlines_per_snapshot_config_into_script(self):
+        from percy.snapshot import _wait_for_ready
+        driver = Mock()
+        driver.execute_async_script.return_value = None
+        driver.timeouts.script = 30
+        cfg = {'preset': 'strict', 'stabilityWindowMs': 500}
 
-        # Stub execute_async_script via side_effect so we don't invoke real
-        # geckodriver (which hangs CI when the async script returns
-        # synchronously via done()).
-        # pylint: disable=unused-argument
-        def fake_async(*args, **kwargs): return None
-        with patch.object(
-            self.driver, 'execute_async_script', side_effect=fake_async
-        ):
-            percy_snapshot(self.driver, 'readiness-no-leak',
-                           readiness={'preset': 'strict',
-                                      'stabilityWindowMs': 500})
+        _wait_for_ready(driver, percy_config={}, kwargs={'readiness': cfg})
 
-        snapshot_req = next(
-            (req for req in httpretty.latest_requests()
-             if req.path == '/percy/snapshot'),
-            None)
-        self.assertIsNotNone(snapshot_req, 'expected /percy/snapshot POST')
-        body = json.loads(snapshot_req.body)
-        self.assertNotIn(
-            'readiness', body,
-            '`readiness` must not appear in snapshot POST body, '
-            f'got keys: {list(body.keys())}')
+        script = driver.execute_async_script.call_args.args[0]
+        self.assertIn('"preset": "strict"', script)
+        self.assertIn('"stabilityWindowMs": 500', script)
 
-    @unittest.skip("hangs CI; orchestration covered in sdk-utils")
-    def test_readiness_diagnostics_attached_to_dom_snapshot(self):
-        mock_healthcheck()
-        mock_snapshot()
+    def test_wait_for_ready_sets_and_restores_script_timeout(self):
+        from percy.snapshot import _wait_for_ready
+        driver = Mock()
+        driver.execute_async_script.return_value = None
+        driver.timeouts.script = 30  # selenium 4 default (seconds)
 
-        diagnostics = {
-            'passed': True,
-            'timed_out': False,
-            'preset': 'balanced',
-            'total_duration_ms': 84,
-            'checks': {}
-        }
+        _wait_for_ready(
+            driver, percy_config={},
+            kwargs={'readiness': {'timeoutMs': 5000}})
 
-        # execute_async_script returns the readiness diagnostics dict (the SDK
-        # captures it). execute_script returns the serialize result. The SDK
-        # must merge diagnostics into the dom_snapshot dict before POSTing.
-        # pylint: disable=unused-argument
-        def fake_async(*args, **kwargs):
-            return diagnostics
+        # set to readiness.timeoutMs/1000 + 2s buffer, then restored
+        driver.set_script_timeout.assert_any_call(7)  # 5000/1000 + 2
+        driver.set_script_timeout.assert_any_call(30)  # restored
 
-        def fake_sync(script, *args, **kwargs):
-            if 'PercyDOM.serialize' in script:
-                return {'html': '<html></html>'}
-            return None
+    def test_wait_for_ready_swallows_exception_and_returns_none(self):
+        from percy.snapshot import _wait_for_ready
+        driver = Mock()
+        driver.execute_async_script.side_effect = RuntimeError('boom')
 
-        with patch.object(self.driver, 'execute_async_script', side_effect=fake_async), \
-             patch.object(self.driver, 'execute_script', side_effect=fake_sync):
-            percy_snapshot(self.driver, 'readiness-diagnostics', readiness={})
+        with patch('percy.snapshot.log') as mock_log:
+            result = _wait_for_ready(driver, percy_config={},
+                                     kwargs={'readiness': {}})
+
+        self.assertIsNone(result)
+        mock_log.assert_called_once()
+        self.assertIn('waitForReady failed', mock_log.call_args.args[0])
+
+    def test_get_serialized_dom_pops_readiness_from_serialize_call(self):
+        """`readiness` is SDK-local; PercyDOM.serialize must not see it."""
+        from percy.snapshot import get_serialized_dom
+        driver = Mock()
+        driver.execute_script.return_value = {'html': '<html></html>'}
+        driver.execute_async_script.return_value = None
+        driver.current_url = 'http://localhost:8000/'
+        driver.get_cookies.return_value = []
+
+        get_serialized_dom(driver, cookies=[], percy_config={},
+                           readiness={'preset': 'balanced'})
+
+        serialize_call = next(
+            c for c in driver.execute_script.call_args_list
+            if 'PercyDOM.serialize' in c.args[0]
+        )
+        self.assertNotIn('readiness', serialize_call.args[0])
+
+    def test_get_serialized_dom_attaches_diagnostics(self):
+        from percy.snapshot import get_serialized_dom
+        driver = Mock()
+        driver.execute_script.return_value = {'html': '<html></html>'}
+        driver.execute_async_script.return_value = {'passed': True}
+        driver.current_url = 'http://localhost:8000/'
+        driver.get_cookies.return_value = []
+
+        dom_snapshot = get_serialized_dom(
+            driver, cookies=[], percy_config={}, readiness={'preset': 'balanced'})
+
+        self.assertEqual(dom_snapshot['readiness_diagnostics'], {'passed': True})
 
         # Find the /percy/snapshot POST and assert its body carries the diag.
         snapshot_req = next(
