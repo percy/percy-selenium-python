@@ -228,16 +228,19 @@ def _wait_for_ready(driver, percy_config, kwargs):
     payload they already have in scope) — we don't re-call the cached lookup
     here, both for clarity and to avoid surprise dependencies on the cache.
     """
-    readiness_config = _resolve_readiness_config(percy_config, kwargs)
-    # Opt-in only: skip the readiness gate entirely when the merged config
-    # is empty (no per-snapshot readiness kwarg, no global .percy.yml config).
-    # Geckodriver has a history of hanging on async scripts whose callbacks
-    # are delivered via microtasks, and the bare execute_async_script call
-    # itself has hung tests for hours in CI even when the embedded JS calls
-    # done() synchronously. Until that's root-caused, default-skip; users
-    # opt in via `readiness={...}` or .percy.yml.
-    if not readiness_config:
+    # Opt-in only: skip the readiness gate entirely unless the caller
+    # either passed a `readiness` kwarg or set one in .percy.yml. Geckodriver
+    # has a history of hanging on async scripts whose callbacks arrive via
+    # microtasks, and the bare execute_async_script call has hung CI for
+    # hours even when the embedded JS calls done() synchronously. Until
+    # that's root-caused, default-skip.
+    has_explicit_kwarg = 'readiness' in kwargs
+    has_global_config = bool(
+        (percy_config or {}).get('snapshot', {}).get('readiness')
+        if isinstance(percy_config, dict) else False)
+    if not has_explicit_kwarg and not has_global_config:
         return None
+    readiness_config = _resolve_readiness_config(percy_config, kwargs)
     if readiness_config.get('preset') == 'disabled':
         return None
     # Match readiness.timeoutMs to the driver's async-script timeout so a

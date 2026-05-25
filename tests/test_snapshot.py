@@ -627,7 +627,7 @@ class TestPercySnapshot(unittest.TestCase):
         )
         self.assertIsNotNone(snapshot_req)
         body = json.loads(snapshot_req.body.decode('utf-8'))
-        self.assertEqual(body['domSnapshot']['readiness_diagnostics'], diagnostics)
+        self.assertEqual(body['dom_snapshot']['readiness_diagnostics'], diagnostics)
 
 class TestPercyScreenshot(unittest.TestCase):
     @classmethod
