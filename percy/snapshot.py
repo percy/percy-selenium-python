@@ -263,11 +263,20 @@ def _wait_for_ready(driver, percy_config, kwargs):
     deadline_ms = int((timeout_ms if isinstance(timeout_ms, (int, float)) and timeout_ms > 0
                        else 10000) + 2000)
     try:
+        # done() must be called ASYNCHRONOUSLY for execute_async_script to
+        # unblock — calling it synchronously within the script's body has
+        # historically hung geckodriver in CI for hours. fireDone() wraps
+        # done() in setTimeout(_, 0) so every code path defers the callback
+        # to the next event-loop tick.
         diagnostics = driver.execute_async_script(
             'var config = ' + json.dumps(readiness_config) + ';'
             'var done = arguments[arguments.length - 1];'
             'var doneFired = false;'
-            'function fireDone(v) { if (doneFired) return; doneFired = true; done(v); }'
+            'function fireDone(v) {'
+            '  if (doneFired) return;'
+            '  doneFired = true;'
+            '  setTimeout(function() { done(v); }, 0);'
+            '}'
             'setTimeout(function() { fireDone(); }, ' + str(deadline_ms) + ');'
             'try {'
             "  if (typeof PercyDOM !== 'undefined'"
