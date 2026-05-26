@@ -650,9 +650,127 @@ class PercyContextLost(Exception):
         super().__init__(message)
         self.partial_capture = partial_capture or []
 
-def get_serialized_dom(driver, cookies, percy_dom_script=None, percy_config=None, **kwargs):
+def _resolve_readiness_config(percy_config, kwargs):
+    """Shallow-merge global (.percy.yml) readiness config with per-snapshot
+    override. Per-snapshot keys win; unspecified keys are inherited.
+
+    Defensive against `config.snapshot` being None or non-dict — the CLI is
+    free to evolve its healthcheck payload and `None` should degrade to `{}`,
+    not raise AttributeError mid-snapshot."""
+    config = percy_config or {}
+    global_readiness = ((config.get('snapshot') or {}).get('readiness')) or {}
+    per_snapshot = kwargs.get('readiness') or {}
+    if not isinstance(global_readiness, dict):
+        global_readiness = {}
+    if not isinstance(per_snapshot, dict):
+        per_snapshot = {}
+    return {**global_readiness, **per_snapshot}
+
+
+def _wait_for_ready(driver, percy_config, kwargs):
+    """Run readiness checks before serialize.
+
+    Sends PercyDOM.waitForReady via execute_async_script. The script checks
+    typeof PercyDOM.waitForReady in-browser so older CLI versions without the
+    method are a graceful no-op. Any failure is caught and logged at debug;
+    serialize still runs.
+
+    Returns readiness diagnostics (or None) so callers can attach it
+    to the domSnapshot for CLI-side logging.
+
+    Config precedence: per-snapshot `kwargs['readiness']` shallow-merged
+    over global `percy_config.snapshot.readiness`; per-snapshot keys win,
+    unspecified keys (e.g. a global `preset: disabled` kill switch) are
+    inherited. Skips entirely when the merged preset is 'disabled'.
+
+    The caller must pass `percy_config` explicitly (from the `is_percy_enabled()`
+    payload they already have in scope) — we don't re-call the cached lookup
+    here, both for clarity and to avoid surprise dependencies on the cache.
+    """
+    has_explicit_kwarg = 'readiness' in kwargs
+    has_global_config = bool(
+        (percy_config or {}).get('snapshot', {}).get('readiness')
+        if isinstance(percy_config, dict) else False)
+    if not has_explicit_kwarg and not has_global_config:
+        return None
+    readiness_config = _resolve_readiness_config(percy_config, kwargs)
+    if readiness_config.get('preset') == 'disabled':
+        return None
+    # Match readiness.timeoutMs to the driver's async-script timeout so a
+    # higher user-configured readiness timeout isn't silently capped by
+    # WebDriver's default (~30s on Selenium 4, lower on some remotes).
+    timeout_ms = readiness_config.get('timeoutMs')
+    previous_timeout = None
+    if isinstance(timeout_ms, (int, float)) and timeout_ms > 0:
+        try:
+            # Selenium 4 exposes driver.timeouts.script (float seconds).
+            previous_timeout = getattr(driver.timeouts, 'script', None)
+            driver.set_script_timeout(timeout_ms / 1000 + 2)  # +2s buffer
+        except Exception:
+            previous_timeout = None  # older Selenium / unsupported — best effort
+    # JS-side hard timeout: geckodriver does not reliably honor selenium's
+    # script_timeout for async scripts whose pending work lives in microtasks
+    # (Promise.then chains), so tests can hang indefinitely. Wrap done() in
+    # a once-only guard and arm a setTimeout that calls it after the
+    # readiness deadline + 2s buffer, regardless of what waitForReady does.
+    deadline_ms = int((timeout_ms if isinstance(timeout_ms, (int, float)) and timeout_ms > 0
+                       else 10000) + 2000)
+    try:
+        # done() must be called ASYNCHRONOUSLY for execute_async_script to
+        # unblock — calling it synchronously within the script's body has
+        # historically hung geckodriver in CI for hours. fireDone() wraps
+        # done() in setTimeout(_, 0) so every code path defers the callback
+        # to the next event-loop tick.
+        diagnostics = driver.execute_async_script(
+            'var config = ' + json.dumps(readiness_config) + ';'
+            'var done = arguments[arguments.length - 1];'
+            'var doneFired = false;'
+            'function fireDone(v) {'
+            '  if (doneFired) return;'
+            '  doneFired = true;'
+            '  setTimeout(function() { done(v); }, 0);'
+            '}'
+            'setTimeout(function() { fireDone(); }, ' + str(deadline_ms) + ');'
+            'try {'
+            "  if (typeof PercyDOM !== 'undefined'"
+            "      && typeof PercyDOM.waitForReady === 'function') {"
+            '    PercyDOM.waitForReady(config)'
+            '      .then(function(r){ fireDone(r); })'
+            '      .catch(function(){ fireDone(); });'
+            '  } else { fireDone(); }'
+            '} catch(e) { fireDone(); }'
+        )
+        return diagnostics
+    except Exception as e:
+        log(f'waitForReady failed, proceeding to serialize: {e}', 'debug')
+        return None
+    finally:
+        if previous_timeout is not None:
+            try:
+                driver.set_script_timeout(previous_timeout)
+            except Exception:
+                pass
+
+
+def get_serialized_dom(driver, cookies, percy_config=None, percy_dom_script=None,
+                       skip_readiness=False, readiness_diagnostics=None, **kwargs):
+    # 0. Readiness gate before serialize. Graceful on old CLI.
+    #    `skip_readiness` lets responsive capture run readiness once before the
+    #    width loop and pass diagnostics through, instead of paying the cost
+    #    per width.
+    if not skip_readiness:
+        readiness_diagnostics = _wait_for_ready(driver, percy_config, kwargs)
+    # Strip `readiness` from kwargs before forwarding — it's an SDK-local
+    # concern; the CLI already has it from healthcheck and a top-level
+    # `readiness` in the POST body is brittle against future validators.
+    kwargs.pop('readiness', None)
     # 1. Serialize the main page first (this adds the data-percy-element-ids)
     dom_snapshot = driver.execute_script(f'return PercyDOM.serialize({json.dumps(kwargs)})')
+    # Attach readiness diagnostics so the CLI can log timing and pass/fail.
+    # `is not None` preserves legitimate falsy returns (e.g. `{}` meaning
+    # "gate ran, no notable diagnostics").
+    if readiness_diagnostics is not None and isinstance(dom_snapshot, dict):
+        dom_snapshot['readiness_diagnostics'] = readiness_diagnostics
     # 2. Process CORS iframes (nested, depth-capped, cycle-guarded, ignore-aware)
     if percy_dom_script:
         ctx = {
@@ -753,6 +871,12 @@ def capture_responsive_dom(driver, cookies, config, percy_dom_script=None, **kwa
     resize_count = 0
     # Initialize resize listener once before the loop
     driver.execute_script("PercyDOM.waitForResize()")
+    # Run readiness ONCE before the per-width loop. With N widths and a
+    # `timeoutMs` of e.g. 10s, running readiness per width can cost up to
+    # N*timeout seconds of sequential waits — almost always undesirable.
+    # Per-width DOM mutations after viewport changes are handled by the
+    # `waitForResize` instrumentation above, not by re-running readiness.
+    responsive_readiness_diagnostics = _wait_for_ready(driver, config, kwargs)
     target_height = current_height
 
     if PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT:
@@ -789,7 +913,10 @@ def capture_responsive_dom(driver, cookies, config, percy_dom_script=None, **kwa
         _responsive_sleep()
         dom_snapshot = get_serialized_dom(
             driver, cookies, percy_dom_script=percy_dom_script,
-            percy_config=config, **kwargs)
+            percy_config=config,
+            skip_readiness=True,
+            readiness_diagnostics=responsive_readiness_diagnostics,
+            **kwargs)
         dom_snapshot['width'] = width
         print(f'Taken snapshot for width: {width}, height: {height}')
         dom_snapshots.append(dom_snapshot)
@@ -842,10 +969,14 @@ def percy_snapshot(driver, name, **kwargs):
         else:
             dom_snapshot = get_serialized_dom(
                 driver, cookies, percy_dom_script=percy_dom_script,
-                percy_config=data['config'], **kwargs)
+                percy_config=data.get('config'), **kwargs)
 
+        # Strip SDK-local `readiness` from the snapshot POST body. The CLI
+        # already has it via healthcheck; sending it again here risks future
+        # CLI-side validators rejecting unknown top-level fields.
+        post_kwargs = {k: v for k, v in kwargs.items() if k != 'readiness'}
         # Post the DOM to the snapshot endpoint with snapshot options and other info
-        response = requests.post(f'{PERCY_CLI_API}/percy/snapshot', json={**kwargs, **{
+        response = requests.post(f'{PERCY_CLI_API}/percy/snapshot', json={**post_kwargs, **{
             'client_info': CLIENT_INFO,
             'environment_info': ENV_INFO,
             'dom_snapshot': dom_snapshot,
