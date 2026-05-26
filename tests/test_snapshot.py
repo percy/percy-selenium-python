@@ -13,7 +13,12 @@ from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.remote.remote_connection import RemoteConnection
 from selenium.webdriver.safari.remote_connection import SafariRemoteConnection
-from percy.snapshot import create_region
+from percy.snapshot import (
+    create_region,
+    _resolve_readiness_config,
+    _wait_for_ready,
+    get_serialized_dom,
+)
 
 from percy import percy_snapshot, percySnapshot, percy_screenshot
 import percy.snapshot as local
@@ -119,6 +124,7 @@ def mock_screenshot(fail=False, data=False):
         }),
         status=(500 if fail else 200))
 
+# pylint: disable=too-many-public-methods
 class TestPercySnapshot(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -471,6 +477,143 @@ class TestPercySnapshot(unittest.TestCase):
         "percy_snapshot(). Please use percy_screenshot() function while using Percy with Automate."\
         " For more information on usage of PercyScreenshot, refer https://www.browserstack.com"\
         "/docs/percy/integrate/functional-and-visual", str(context.exception))
+
+
+class TestReadinessGate(unittest.TestCase):
+    """Unit tests for _wait_for_ready / _resolve_readiness_config using a
+    fully-mocked WebDriver. Bypasses real geckodriver/Firefox traffic, so
+    cannot hang on real in-page observers like the integration-style tests
+    did."""
+
+    def test_resolve_readiness_config_shallow_merges(self):
+        merged = _resolve_readiness_config(
+            {'snapshot': {'readiness': {'preset': 'balanced', 'timeoutMs': 8000}}},
+            {'readiness': {'stabilityWindowMs': 500}}
+        )
+        self.assertEqual(merged, {
+            'preset': 'balanced', 'timeoutMs': 8000, 'stabilityWindowMs': 500
+        })
+
+    def test_resolve_readiness_config_per_snapshot_wins(self):
+        merged = _resolve_readiness_config(
+            {'snapshot': {'readiness': {'preset': 'balanced'}}},
+            {'readiness': {'preset': 'strict'}}
+        )
+        self.assertEqual(merged['preset'], 'strict')
+
+    def test_resolve_readiness_config_handles_none_snapshot(self):
+        merged = _resolve_readiness_config({'snapshot': None}, {})
+        self.assertEqual(merged, {})
+
+    def test_resolve_readiness_config_handles_non_dict_inputs(self):
+        merged = _resolve_readiness_config(
+            {'snapshot': {'readiness': 'not-a-dict'}},
+            {'readiness': 12345}
+        )
+        self.assertEqual(merged, {})
+
+    def test_wait_for_ready_opt_in_skips_when_no_config(self):
+        driver = Mock()
+        result = _wait_for_ready(driver, percy_config={}, kwargs={})
+        self.assertIsNone(result)
+        driver.execute_async_script.assert_not_called()
+
+    def test_wait_for_ready_runs_when_kwargs_opt_in(self):
+        diagnostics = {'passed': True, 'preset': 'balanced'}
+        driver = Mock()
+        driver.execute_async_script.return_value = diagnostics
+        driver.timeouts.script = 30
+
+        result = _wait_for_ready(driver, percy_config={}, kwargs={'readiness': {}})
+
+        self.assertEqual(result, diagnostics)
+        self.assertEqual(driver.execute_async_script.call_count, 1)
+        script = driver.execute_async_script.call_args.args[0]
+        self.assertIn('PercyDOM.waitForReady', script)
+        self.assertIn('typeof PercyDOM', script)
+
+    def test_wait_for_ready_runs_when_global_config_opts_in(self):
+        driver = Mock()
+        driver.execute_async_script.return_value = None
+        driver.timeouts.script = 30
+        percy_config = {'snapshot': {'readiness': {'preset': 'balanced'}}}
+
+        _wait_for_ready(driver, percy_config=percy_config, kwargs={})
+
+        self.assertEqual(driver.execute_async_script.call_count, 1)
+
+    def test_wait_for_ready_skips_disabled_preset(self):
+        driver = Mock()
+        result = _wait_for_ready(
+            driver, percy_config={}, kwargs={'readiness': {'preset': 'disabled'}})
+        self.assertIsNone(result)
+        driver.execute_async_script.assert_not_called()
+
+    def test_wait_for_ready_inlines_per_snapshot_config_into_script(self):
+        driver = Mock()
+        driver.execute_async_script.return_value = None
+        driver.timeouts.script = 30
+        cfg = {'preset': 'strict', 'stabilityWindowMs': 500}
+
+        _wait_for_ready(driver, percy_config={}, kwargs={'readiness': cfg})
+
+        script = driver.execute_async_script.call_args.args[0]
+        self.assertIn('"preset": "strict"', script)
+        self.assertIn('"stabilityWindowMs": 500', script)
+
+    def test_wait_for_ready_sets_and_restores_script_timeout(self):
+        driver = Mock()
+        driver.execute_async_script.return_value = None
+        driver.timeouts.script = 30  # selenium 4 default (seconds)
+
+        _wait_for_ready(
+            driver, percy_config={},
+            kwargs={'readiness': {'timeoutMs': 5000}})
+
+        # set to readiness.timeoutMs/1000 + 2s buffer, then restored
+        driver.set_script_timeout.assert_any_call(7)  # 5000/1000 + 2
+        driver.set_script_timeout.assert_any_call(30)  # restored
+
+    def test_wait_for_ready_swallows_exception_and_returns_none(self):
+        driver = Mock()
+        driver.execute_async_script.side_effect = RuntimeError('boom')
+
+        with patch('percy.snapshot.log') as mock_log:
+            result = _wait_for_ready(driver, percy_config={},
+                                     kwargs={'readiness': {}})
+
+        self.assertIsNone(result)
+        mock_log.assert_called_once()
+        self.assertIn('waitForReady failed', mock_log.call_args.args[0])
+
+    def test_get_serialized_dom_pops_readiness_from_serialize_call(self):
+        """`readiness` is SDK-local; PercyDOM.serialize must not see it."""
+        driver = Mock()
+        driver.execute_script.return_value = {'html': '<html></html>'}
+        driver.execute_async_script.return_value = None
+        driver.current_url = 'http://localhost:8000/'
+        driver.get_cookies.return_value = []
+
+        get_serialized_dom(driver, cookies=[], percy_config={},
+                           readiness={'preset': 'balanced'})
+
+        serialize_call = next(
+            c for c in driver.execute_script.call_args_list
+            if 'PercyDOM.serialize' in c.args[0]
+        )
+        self.assertNotIn('readiness', serialize_call.args[0])
+
+    def test_get_serialized_dom_attaches_diagnostics(self):
+        driver = Mock()
+        driver.execute_script.return_value = {'html': '<html></html>'}
+        driver.execute_async_script.return_value = {'passed': True}
+        driver.current_url = 'http://localhost:8000/'
+        driver.get_cookies.return_value = []
+
+        dom_snapshot = get_serialized_dom(
+            driver, cookies=[], percy_config={}, readiness={'preset': 'balanced'})
+
+        self.assertEqual(dom_snapshot['readiness_diagnostics'], {'passed': True})
 
 class TestPercyScreenshot(unittest.TestCase):
     @classmethod
