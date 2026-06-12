@@ -12,7 +12,7 @@ $(VENV)/$(MARKER): $(VENVDEPS) | $(VENV)
 	$(VENV)/pip install $(foreach path,$(REQUIREMENTS),-r $(path))
 	touch $(VENV)/$(MARKER)
 
-.PHONY: venv lint test clean build release
+.PHONY: venv lint test coverage clean build release
 
 venv: $(VENV)/$(MARKER)
 
@@ -24,6 +24,19 @@ test: venv
 	$(VENV)/python -m unittest tests.test_cache
 	$(VENV)/python -m unittest tests.test_driver_metadata
 	$(VENV)/python -m unittest tests.test_robot_library
+	$(VENV)/python -m unittest tests.test_snapshot_units
+	$(VENV)/python -m unittest tests.test_init
+
+coverage: venv
+	$(VENV)/coverage erase
+	npx percy exec --testing -- $(VENV)/coverage run -p --source percy -m unittest tests.test_snapshot
+	$(VENV)/coverage run -p --source percy -m unittest tests.test_cache
+	$(VENV)/coverage run -p --source percy -m unittest tests.test_driver_metadata
+	$(VENV)/coverage run -p --source percy -m unittest tests.test_robot_library
+	$(VENV)/coverage run -p --source percy -m unittest tests.test_snapshot_units
+	$(VENV)/coverage run -p --source percy -m unittest tests.test_init
+	$(VENV)/coverage combine
+	$(VENV)/coverage report
 
 clean:
 	rm -rf $$(cat .gitignore)
