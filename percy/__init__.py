@@ -2,19 +2,16 @@ from percy.version import __version__
 from percy.snapshot import percy_automate_screenshot
 from percy.exception import UnsupportedWebDriverException
 
-# Robot Framework support — graceful when robotframework is not installed.
-# robot_library handles its own optional-import fallback internally, so this
-# import never actually raises; the guard is purely defensive.
+# Robot Framework support — graceful when robotframework is not installed
 try:
     from percy.robot_library import PercyLibrary
-except ImportError:  # pragma: no cover
+except ImportError:
     pass
 
-# import snapshot command. percy.snapshot is the core module and always ships
-# with this package, so the fallback below is defensive and never executed.
+# import snapshot command
 try:
     from percy.snapshot import percy_snapshot
-except ImportError:  # pragma: no cover
+except ImportError:
     def percy_snapshot(driver, *a, **kw):
         raise ModuleNotFoundError("[percy] `percy-selenium` package is not installed, "\
                         "please install it to use percy_snapshot command")
