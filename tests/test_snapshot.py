@@ -1,4 +1,5 @@
 # pylint: disable=too-many-lines
+import os
 import unittest
 from unittest.mock import patch, Mock
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -18,6 +19,8 @@ from percy.snapshot import (
     _resolve_readiness_config,
     _wait_for_ready,
     get_serialized_dom,
+    _resolve_cli_api_address,
+    DEFAULT_PERCY_CLI_API,
 )
 
 from percy import percy_snapshot, percySnapshot, percy_screenshot
@@ -123,6 +126,38 @@ def mock_screenshot(fail=False, data=False):
             "data": data_object if data else None
         }),
         status=(500 if fail else 200))
+
+class TestResolveCliApiAddress(unittest.TestCase):
+    @patch.dict(os.environ, {}, clear=True)
+    def test_defaults_to_localhost(self):
+        self.assertEqual(_resolve_cli_api_address(), DEFAULT_PERCY_CLI_API)
+
+    @patch.dict(os.environ, {'PERCY_CLI_API': 'http://127.0.0.1:5338'}, clear=True)
+    def test_allows_loopback(self):
+        self.assertEqual(_resolve_cli_api_address(), 'http://127.0.0.1:5338')
+
+    @patch.dict(os.environ, {'PERCY_CLI_API': 'http://attacker.example/x'}, clear=True)
+    def test_rejects_remote_host(self):
+        self.assertEqual(_resolve_cli_api_address(), DEFAULT_PERCY_CLI_API)
+
+    @patch.dict(os.environ, {'PERCY_CLI_API': 'http://169.254.169.254/latest/meta-data'}, clear=True)
+    def test_rejects_link_local_ssrf_target(self):
+        self.assertEqual(_resolve_cli_api_address(), DEFAULT_PERCY_CLI_API)
+
+    @patch.dict(os.environ, {
+        'PERCY_CLI_API': 'https://percy-cli.internal:5338',
+        'PERCY_ALLOW_REMOTE_CLI_API': 'true'
+    }, clear=True)
+    def test_allows_remote_https_with_opt_in(self):
+        self.assertEqual(_resolve_cli_api_address(), 'https://percy-cli.internal:5338')
+
+    @patch.dict(os.environ, {
+        'PERCY_CLI_API': 'http://percy-cli.internal:5338',
+        'PERCY_ALLOW_REMOTE_CLI_API': 'true'
+    }, clear=True)
+    def test_remote_opt_in_still_requires_https(self):
+        self.assertEqual(_resolve_cli_api_address(), DEFAULT_PERCY_CLI_API)
+
 
 # pylint: disable=too-many-public-methods
 class TestPercySnapshot(unittest.TestCase):

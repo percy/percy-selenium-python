@@ -20,8 +20,33 @@ ENV_INFO = ['selenium/' + SELENIUM_VERSION, 'python/' + platform.python_version(
 def _get_bool_env(key):
     return os.environ.get(key, "").lower() == "true"
 
-# Maybe get the CLI API address from the environment
-PERCY_CLI_API = os.environ.get('PERCY_CLI_API') or 'http://localhost:5338'
+DEFAULT_PERCY_CLI_API = 'http://localhost:5338'
+_LOOPBACK_HOSTS = frozenset({'localhost', '127.0.0.1', '::1'})
+
+
+def _resolve_cli_api_address():
+    # The Percy CLI runs locally. PERCY_CLI_API is used as the base for every
+    # outbound call AND as the source of the @percy/dom script that is injected
+    # and executed in the browser, and the healthcheck response drives the
+    # session-type auth gate. An attacker-controlled value therefore enables
+    # SSRF, CLI-fetched-JS RCE, and an auth-gate bypass (CWE-918/CWE-94/CWE-306).
+    # Restrict it to loopback; allow a remote host only over HTTPS with an
+    # explicit opt-in, otherwise warn and fall back to the local default.
+    raw = os.environ.get('PERCY_CLI_API') or DEFAULT_PERCY_CLI_API
+    host = (urlparse(raw).hostname or '').lower()
+    if host in _LOOPBACK_HOSTS:
+        return raw
+    allow_remote = os.environ.get('PERCY_ALLOW_REMOTE_CLI_API', '').lower() in ('1', 'true', 'yes')
+    if allow_remote and urlparse(raw).scheme == 'https':
+        return raw
+    print(f"[percy] Ignoring non-loopback PERCY_CLI_API '{raw}'; falling back to "
+          f"{DEFAULT_PERCY_CLI_API}. To target a remote Percy CLI use an https:// URL "
+          "and set PERCY_ALLOW_REMOTE_CLI_API=true.")
+    return DEFAULT_PERCY_CLI_API
+
+
+# Maybe get the CLI API address from the environment (validated to loopback)
+PERCY_CLI_API = _resolve_cli_api_address()
 PERCY_DEBUG = os.environ.get('PERCY_LOGLEVEL') == 'debug'
 RESPONSIVE_CAPTURE_SLEEP_TIME = (
     os.environ.get('RESPONSIVE_CAPTURE_SLEEP_TIME') or
