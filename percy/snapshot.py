@@ -501,7 +501,7 @@ def percy_snapshot(driver, name, **kwargs):
         cookies = driver.get_cookies()
 
         # Merge .percy.yml config options with snapshot options (snapshot options take priority)
-        config_options = data['config'].get('snapshot', {})
+        config_options = data['config'].get('snapshot') or {}
         merged_kwargs = {**config_options, **kwargs}
 
         # Serialize and capture the DOM
