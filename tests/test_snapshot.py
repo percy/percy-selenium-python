@@ -615,6 +615,53 @@ class TestReadinessGate(unittest.TestCase):
 
         self.assertEqual(dom_snapshot['readiness_diagnostics'], {'passed': True})
 
+class TestConfigPerCallMergePrecedence(unittest.TestCase):
+    """Unit tests for merging .percy.yml `config.snapshot` options with
+    per-snapshot kwargs before PercyDOM.serialize. Per-call kwargs win;
+    config-only keys are still forwarded to serialize."""
+
+    def setUp(self):
+        local.is_percy_enabled.cache_clear()
+        local.fetch_percy_dom.cache_clear()
+        httpretty.enable()
+
+    def tearDown(self):
+        httpretty.disable()
+        httpretty.reset()
+
+    def test_config_and_per_call_options_merge_into_serialize(self):
+        """`config.snapshot` options reach PercyDOM.serialize, and a per-call
+        kwarg overrides the same key from config (per-call priority)."""
+        mock_healthcheck(config={'snapshot': {
+            'enableJavaScript': True, 'percyCSS': 'FROM_CONFIG'}})
+        mock_snapshot()
+
+        # Fully-mocked driver so we can capture the exact string passed to
+        # execute_script for the PercyDOM.serialize call. No real browser.
+        driver = Mock()
+        driver.execute_script.return_value = {'html': '<html></html>'}
+        driver.execute_async_script.return_value = None
+        driver.get_cookies.return_value = []
+        driver.current_url = 'http://localhost:8000/'
+        driver.find_elements.return_value = []
+
+        percy_snapshot(driver, 'name', percyCSS='FROM_CALL')
+
+        serialize_call = next(
+            c for c in driver.execute_script.call_args_list
+            if 'PercyDOM.serialize' in c.args[0]
+        )
+        serialize_options = json.loads(
+            serialize_call.args[0]
+            .split('PercyDOM.serialize(', 1)[1]
+            .rsplit(')', 1)[0]
+        )
+        # config-only key reached serialize
+        self.assertEqual(serialize_options['enableJavaScript'], True)
+        # per-call kwarg overrode the config value
+        self.assertEqual(serialize_options['percyCSS'], 'FROM_CALL')
+
+
 class TestPercyScreenshot(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
