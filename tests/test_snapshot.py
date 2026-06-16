@@ -479,6 +479,59 @@ class TestPercySnapshot(unittest.TestCase):
         "/docs/percy/integrate/functional-and-visual", str(context.exception))
 
 
+# pylint: disable=too-few-public-methods
+class TestConfigDeepMerge(unittest.TestCase):
+    """Unit test for deep-merging .percy.yml config with per-snapshot options
+    using a fully-mocked WebDriver, so it never launches a real browser."""
+
+    def setUp(self):
+        local.is_percy_enabled.cache_clear()
+        local.fetch_percy_dom.cache_clear()
+        httpretty.enable()
+
+    def tearDown(self):
+        httpretty.disable()
+        httpretty.reset()
+
+    @patch('selenium.webdriver.Chrome')
+    def test_deep_merges_config_with_per_snapshot_options(self, MockChrome):
+        driver = MockChrome.return_value
+        # Capture the argument passed to PercyDOM.serialize(...)
+        serialize_calls = []
+
+        def execute_script(script):
+            if script.startswith('return PercyDOM.serialize('):
+                serialize_calls.append(
+                    json.loads(script[len('return PercyDOM.serialize('):-1]))
+                return { 'html': 'some_dom' }
+            return ''
+
+        driver.execute_script.side_effect = execute_script
+        driver.get_cookies.return_value = []
+        driver.find_elements.return_value = []
+        mock_logger()
+        # config carries a nested `discovery` object with two leaves.
+        mock_healthcheck(config={
+            'snapshot': {
+                'discovery': { 'networkIdleTimeout': 50, 'disableCache': False }
+            }
+        })
+        mock_snapshot()
+
+        with patch.object(driver, 'current_url', 'http://localhost:8000/'):
+            with patch.object(driver, 'capabilities', new={ 'browserName': 'chrome' }):
+                # per-call overrides only one leaf of the nested discovery object
+                percy_snapshot(driver, 'Snapshot 1',
+                               discovery={ 'disableCache': True })
+
+        self.assertEqual(len(serialize_calls), 1)
+        serialized = serialize_calls[0]
+        # sibling leaf kept from config, overridden leaf takes per-call value
+        self.assertEqual(serialized['discovery'], {
+            'networkIdleTimeout': 50, 'disableCache': True
+        })
+
+
 class TestReadinessGate(unittest.TestCase):
     """Unit tests for _wait_for_ready / _resolve_readiness_config using a
     fully-mocked WebDriver. Bypasses real geckodriver/Firefox traffic, so

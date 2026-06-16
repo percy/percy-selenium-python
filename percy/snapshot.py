@@ -88,6 +88,14 @@ def fetch_percy_dom():
     response.raise_for_status()
     return response.text
 
+def _deep_merge(base, override):
+    merged = dict(base)
+    for key, value in override.items():
+        existing = merged.get(key)
+        merged[key] = _deep_merge(existing, value) \
+            if isinstance(existing, dict) and isinstance(value, dict) else value
+    return merged
+
 # pylint: disable=too-many-arguments, too-many-branches, too-many-locals
 def create_region(
     boundingBox=None,
@@ -502,7 +510,7 @@ def percy_snapshot(driver, name, **kwargs):
 
         # Merge .percy.yml config options with snapshot options (snapshot options take priority)
         config_options = data['config'].get('snapshot') or {}
-        merged_kwargs = {**config_options, **kwargs}
+        merged_kwargs = _deep_merge(config_options, kwargs)
 
         # Serialize and capture the DOM
         if is_responsive_snapshot_capture(data['config'], **merged_kwargs):
