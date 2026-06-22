@@ -1,0 +1,7 @@
+[run]
+source = percy
+parallel = True
+
+[report]
+show_missing = True
+fail_under = 100

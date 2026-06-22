@@ -1,6 +1,6 @@
 # pylint: disable=[abstract-class-instantiated, arguments-differ]
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 from selenium.webdriver.remote.webdriver import WebDriver
 
 from percy.driver_metadata import DriverMetaData
@@ -38,6 +38,17 @@ class TestDriverMetadata(unittest.TestCase):
     def test_command_executor_url(self):
         url = 'https://example-hub:4444/wd/hub'
         self.assertEqual(self.metadata.command_executor_url, url)
+
+    @patch('percy.cache.Cache.CACHE', {})
+    def test_command_executor_url_falls_back_to_remote_server_addr(self):
+        # Newer Selenium clients drop command_executor._url; fall back to
+        # client_config.remote_server_addr instead of failing.
+        command_executor = Mock(spec=['client_config'])
+        command_executor.client_config.remote_server_addr = 'https://fallback-hub:4444/wd/hub'
+        self.mock_webdriver.command_executor = command_executor
+        self.assertEqual(
+            self.metadata.command_executor_url, 'https://fallback-hub:4444/wd/hub'
+        )
 
     @patch('percy.cache.Cache.CACHE', {})
     def test_capabilities(self):

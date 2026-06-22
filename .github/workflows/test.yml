@@ -61,4 +61,4 @@ jobs:
           yarn remove @percy/cli && yarn link `echo $PERCY_PACKAGES`
           npx percy --version
        
-      - run: make test
+      - run: make coverage
