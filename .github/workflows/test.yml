@@ -15,6 +15,13 @@ jobs:
       matrix:
         python: ["3.8", "3.9", "3.10"]
     runs-on: ubuntu-latest
+    # Hard cap so a wedged real-Firefox/geckodriver session fails fast instead
+    # of burning the full 6h runner budget (see PER-7292 CI hang investigation).
+    timeout-minutes: 20
+    env:
+      # Unbuffer Python stdout so test progress (and the exact point of any
+      # geckodriver hang) is flushed to the CI log live, not lost on timeout.
+      PYTHONUNBUFFERED: "1"
 
     steps:
       - uses: actions-ecosystem/action-regex-match@v2
