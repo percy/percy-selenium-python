@@ -1650,15 +1650,27 @@ class TestExposeClosedShadowRoots(unittest.TestCase):
         """If DOM.enable raises (non-Chromium), we exit silently before
         anything else runs."""
         driver = Mock()
+        driver.capabilities = {'browserName': 'chrome'}
         driver.execute_cdp_cmd.side_effect = Exception("cdp not supported")
         local.expose_closed_shadow_roots(driver)
         # only the failed DOM.enable call happens
         driver.execute_cdp_cmd.assert_called_once_with("DOM.enable", {})
 
+    def test_noop_on_non_chromium_even_with_cdp_attr(self):
+        """Regression (PER-7292 CI hang): some Selenium builds expose
+        execute_cdp_cmd on the Firefox driver, but invoking CDP on geckodriver
+        hangs indefinitely instead of erroring. Guard on browserName so a
+        non-Chromium driver no-ops WITHOUT issuing any CDP command."""
+        driver = Mock()
+        driver.capabilities = {'browserName': 'firefox'}
+        local.expose_closed_shadow_roots(driver)
+        driver.execute_cdp_cmd.assert_not_called()
+
     def test_exposes_closed_roots_via_weakmap(self):
         """When CDP returns a closed shadow root, exposeClosedShadowRoots
         creates the WeakMap and calls Runtime.callFunctionOn to populate it."""
         driver = Mock()
+        driver.capabilities = {'browserName': 'chrome'}
         cdp_calls = []
         def cdp(cmd, params):  # pylint: disable=too-many-return-statements
             cdp_calls.append(cmd)
@@ -1703,6 +1715,7 @@ class TestExposeClosedShadowRoots(unittest.TestCase):
         """Closed shadow roots inside an iframe's contentDocument are not
         exposed (their JS context is separate from the page main world)."""
         driver = Mock()
+        driver.capabilities = {'browserName': 'chrome'}
         def cdp(cmd, _params):
             if cmd == "DOM.getDocument":
                 return {
@@ -2022,6 +2035,7 @@ class TestIterativeShadowWalker(unittest.TestCase):
         }]
 
         driver = Mock()
+        driver.capabilities = {'browserName': 'chrome'}
         def cdp(cmd, params):
             if cmd == "DOM.enable":
                 return {}

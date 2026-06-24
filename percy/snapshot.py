@@ -467,6 +467,20 @@ def expose_closed_shadow_roots(driver):
     """
     if not hasattr(driver, 'execute_cdp_cmd'):
         return
+    # CDP is Chromium-only. Some Selenium builds expose execute_cdp_cmd on the
+    # Firefox driver as well, but the CDP call then HANGS geckodriver
+    # indefinitely (no timeout) instead of failing fast — wedging CI for hours.
+    # Restrict to Chromium, mirroring the responsive-resize guard below
+    # (browserName == 'chrome'). Closed shadow DOM via CDP is Chromium-only by
+    # design, so non-Chromium drivers correctly no-op here.
+    try:
+        browser_name = str((driver.capabilities or {}).get('browserName', '')).lower()
+    except Exception:  # pylint: disable=broad-except
+        browser_name = ''
+    if browser_name != 'chrome':
+        log("Skipping closed shadow DOM capture: CDP requires a Chromium browser",
+            "debug")
+        return
     try:
         driver.execute_cdp_cmd("DOM.enable", {})
     except Exception as e:  # pylint: disable=broad-except
