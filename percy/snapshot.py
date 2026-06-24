@@ -839,7 +839,7 @@ def _setup_resize_listener(driver):
         window.addEventListener('resize', window._percyResizeHandler);
     """)
 
-def change_window_dimension_and_wait(driver, width, height, resizeCount):
+def change_window_dimension_and_wait(driver, width, height, resizeCount, wait_for_resize=True):
     try:
         if CDP_SUPPORT_SELENIUM and driver.capabilities['browserName'] == 'chrome':
             print(f'Attempting to resize using CDP for width {width} and height {height}')
@@ -856,6 +856,13 @@ def change_window_dimension_and_wait(driver, width, height, resizeCount):
         )
         #driver.execute_script(f"window.resizeTo({width}, {height});")
         driver.set_window_size(width, height)
+    # The final window-restore after the responsive loop passes
+    # wait_for_resize=False: no snapshot is taken after it, so polling for the
+    # resize event is pointless — and that poll (a tight WebDriverWait whose
+    # 1s timeout bounds the polling but NOT a single hung execute_script) is
+    # exactly what wedges geckodriver indefinitely in CI, hanging the whole job.
+    if not wait_for_resize:
+        return
     print(f'Resized to {width}x{height}, waiting for resize event...')
 
     try:
@@ -942,7 +949,11 @@ def capture_responsive_dom(driver, cookies, config, percy_dom_script=None, **kwa
                 json.dump(dom_snapshots, file_handle, indent=4)
         except Exception as e:  # pylint: disable=broad-except
             log(f"Could not write debug snapshot dump: {type(e).__name__}: {e}", "debug")
-    change_window_dimension_and_wait(driver, current_width, current_height, resize_count + 1)
+    # Restore the original window size after capture. No snapshot follows, so
+    # skip the resize-event poll (wait_for_resize=False) — it serves no purpose
+    # here and is the call that hangs geckodriver in CI.
+    change_window_dimension_and_wait(
+        driver, current_width, current_height, resize_count + 1, wait_for_resize=False)
     return dom_snapshots
 
 def is_responsive_snapshot_capture(config, **kwargs):

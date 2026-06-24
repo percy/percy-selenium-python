@@ -20,7 +20,7 @@ lint: venv
 	$(VENV)/pylint percy/* tests/*
 
 test: venv
-	npx percy exec --testing -- $(VENV)/python -m unittest -v tests.test_snapshot
+	npx percy exec --testing -- $(VENV)/python -m unittest tests.test_snapshot
 	$(VENV)/python -m unittest tests.test_cache
 	$(VENV)/python -m unittest tests.test_driver_metadata
 	$(VENV)/python -m unittest tests.test_robot_library
