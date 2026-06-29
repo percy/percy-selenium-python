@@ -400,17 +400,20 @@ class TestPercySnapshot(unittest.TestCase):
     @patch.object(local, 'RESPONSIVE_CAPTURE_SLEEP_TIME', 1)
     def test_posts_snapshots_to_the_local_percy_server_for_responsive_dom_chrome(self, MockChrome):
         driver = MockChrome.return_value
-        # execute_script calls (reload=False):
-        #  [0] inject percy_dom  [1] _setup_resize_listener  [2] waitForResize
-        #  [3] resize-check w375  [4] serialize w375  [5] enumerate iframes w375
-        #  [6] resize-check w390  [7] serialize w390  [8] enumerate iframes w390
-        #  [9] restore resize-check
-        driver.execute_script.side_effect = [
-            '', '', None,
-            1, { 'html': 'some_dom' }, [],
-            2, { 'html': 'some_dom_1' }, [],
-            3
-        ]
+        # Route execute_script by script content rather than call position: the
+        # resize path now uses a fixed settle delay (no `window.resizeCount`
+        # poll), so the exact call count/order is no longer fixed. Serialize
+        # returns the per-width DOMs in order; iframe enumeration returns no
+        # frames; everything else (inject percy_dom, waitForResize) -> ''.
+        _responsive_serialize = iter([{ 'html': 'some_dom' }, { 'html': 'some_dom_1' }])
+        def _exec_script(script, *_args, **_kwargs):
+            text = script if isinstance(script, str) else ''
+            if 'PercyDOM.serialize' in text:
+                return next(_responsive_serialize)
+            if 'querySelectorAll' in text:
+                return []
+            return ''
+        driver.execute_script.side_effect = _exec_script
         driver.get_cookies.return_value = ''
         driver.execute_cdp_cmd.return_value = ''
         driver.get_window_size.return_value = { 'height': 400, 'width': 800 }

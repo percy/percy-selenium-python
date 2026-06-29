@@ -9,8 +9,6 @@ from urllib.parse import urlparse
 import requests
 
 from selenium.webdriver import __version__ as SELENIUM_VERSION
-from selenium.common.exceptions import TimeoutException
-from selenium.webdriver.support.ui import WebDriverWait
 from percy.version import __version__ as SDK_VERSION
 from percy.driver_metadata import DriverMetaData
 
@@ -30,6 +28,13 @@ RESPONSIVE_CAPTURE_SLEEP_TIME = (
 )
 PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT = _get_bool_env("PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT")
 PERCY_RESPONSIVE_CAPTURE_RELOAD_PAGE = _get_bool_env("PERCY_RESPONSIVE_CAPTURE_RELOAD_PAGE")
+# Seconds to let the viewport reflow after a responsive resize before snapshotting.
+# A fixed delay rather than a driver poll, so a wedged geckodriver can't hang the
+# run (see change_window_dimension_and_wait). Tunable via env for slow pages.
+try:
+    RESIZE_SETTLE_SECONDS = float(os.environ.get('PERCY_RESIZE_SETTLE_SECONDS') or 0.5)
+except (TypeError, ValueError):
+    RESIZE_SETTLE_SECONDS = 0.5
 # for logging
 LABEL = '[\u001b[35m' + ('percy:python' if PERCY_DEBUG else 'percy') + '\u001b[39m]'
 CDP_SUPPORT_SELENIUM = (str(SELENIUM_VERSION)[0].isdigit() and int(
@@ -843,6 +848,9 @@ def _setup_resize_listener(driver):
     """)
 
 def change_window_dimension_and_wait(driver, width, height, resizeCount, wait_for_resize=True):
+    # resizeCount is retained for call-site/signature stability and the in-page
+    # resize listener; its value is no longer polled (see the settle note below).
+    # pylint: disable=unused-argument
     try:
         if CDP_SUPPORT_SELENIUM and driver.capabilities['browserName'] == 'chrome':
             print(f'Attempting to resize using CDP for width {width} and height {height}')
@@ -866,14 +874,15 @@ def change_window_dimension_and_wait(driver, width, height, resizeCount, wait_fo
     # exactly what wedges geckodriver indefinitely in CI, hanging the whole job.
     if not wait_for_resize:
         return
-    print(f'Resized to {width}x{height}, waiting for resize event...')
-
-    try:
-        WebDriverWait(driver, 1).until(
-            lambda driver: driver.execute_script("return window.resizeCount") == resizeCount
-        )
-    except TimeoutException:
-        log(f"Timed out waiting for window resize event for width {width}", 'debug')
+    # Let the viewport reflow before the snapshot. This previously polled
+    # `window.resizeCount` via execute_script inside a 1s WebDriverWait, but that
+    # timeout only bounds the poll *loop* — not a single execute_script that
+    # geckodriver has wedged on, which hung CI jobs until the runner budget ran
+    # out. A short fixed settle delay issues no driver command between the resize
+    # and the snapshot, so it cannot wedge; we trade event-precise timing for a
+    # hang-proof path.
+    print(f'Resized to {width}x{height}, letting layout settle...')
+    sleep(RESIZE_SETTLE_SECONDS)
 
 def _responsive_sleep():
     if not RESPONSIVE_CAPTURE_SLEEP_TIME:
