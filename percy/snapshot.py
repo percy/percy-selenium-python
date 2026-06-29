@@ -566,24 +566,26 @@ def expose_closed_shadow_roots(driver):
 # behavior stays in sync with percy-nightwatch / percy-webdriverio.
 # ---------------------------------------------------------------------------
 
-DEFAULT_MAX_FRAME_DEPTH = 5
+# Canonical iframe depth bounds, single source of truth (percy/cli #2319):
+# default applies when unset/invalid, HARD_MAX is the upper clamp bound.
+DEFAULT_MAX_FRAME_DEPTH = 3
+HARD_MAX_FRAME_DEPTH = 10
 
 
 def is_unsupported_iframe_src(frame_src):
-    """True if a frame's src cannot be navigated/loaded for serialization."""
+    """True if a frame's src cannot be navigated/loaded for serialization.
+
+    Mirrors the canonical @percy/sdk-utils UNSUPPORTED_IFRAME_SRCS list
+    (percy/cli #2319): a missing/empty src is unsupported, and the check is a
+    case-insensitive startswith over the 15 canonical scheme prefixes."""
     if not frame_src:
         return True
-    unsupported_exact = ("about:blank", "about:srcdoc")
     unsupported_prefixes = (
-        "javascript:", "data:", "vbscript:", "blob:",
-        "chrome:", "chrome-extension:", "about:"
+        "about:", "chrome:", "chrome-extension:", "devtools:", "edge:",
+        "opera:", "view-source:", "data:", "javascript:", "blob:",
+        "vbscript:", "file:", "ws:", "wss:", "ftp:"
     )
-    if frame_src in unsupported_exact:
-        return True
-    for prefix in unsupported_prefixes:
-        if frame_src.startswith(prefix):
-            return True
-    return False
+    return str(frame_src).lower().startswith(unsupported_prefixes)
 
 
 # Backwards-compatible private alias kept for any external callers.
@@ -607,17 +609,18 @@ def _get_origin(url):
     return origin if origin is not None else ""
 
 
-def clamp_frame_depth(value, default_max=DEFAULT_MAX_FRAME_DEPTH):
-    """Clamp a user-provided depth into [1, default_max]."""
+def clamp_frame_depth(value, default=DEFAULT_MAX_FRAME_DEPTH,
+                      hard_max=HARD_MAX_FRAME_DEPTH):
+    """Clamp a user-provided depth, mirroring @percy/sdk-utils clampIframeDepth:
+    an invalid or < 1 value falls back to ``default`` (3); otherwise the value
+    is capped at ``hard_max`` (10)."""
     try:
         n = int(value)
     except (TypeError, ValueError):
-        return default_max
+        return default
     if n < 1:
-        return 1
-    if n > default_max:
-        return default_max
-    return n
+        return default
+    return min(n, hard_max)
 
 
 def normalize_ignore_selectors(value):

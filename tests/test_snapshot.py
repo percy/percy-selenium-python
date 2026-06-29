@@ -1427,7 +1427,9 @@ class TestIframeHelpers(unittest.TestCase):
     def test_is_unsupported_iframe_src_truthy_cases(self):
         for src in [None, '', 'about:blank', 'about:srcdoc', 'javascript:alert(1)',
                     'data:text/html;base64,', 'blob:http://foo', 'chrome://settings',
-                    'vbscript:msg']:
+                    'vbscript:msg', 'devtools://x', 'edge://settings', 'opera://x',
+                    'view-source:http://x', 'file:///etc/passwd', 'ftp://h/f',
+                    'ws://h/s', 'wss://h/s', 'JavaScript:alert(1)', 'FILE:///c']:
             self.assertTrue(local.is_unsupported_iframe_src(src), msg=src)
 
     def test_is_unsupported_iframe_src_falsy_cases(self):
@@ -1435,12 +1437,14 @@ class TestIframeHelpers(unittest.TestCase):
             self.assertFalse(local.is_unsupported_iframe_src(src), msg=src)
 
     def test_clamp_frame_depth_bounds(self):
-        self.assertEqual(local.clamp_frame_depth(0), 1)
-        self.assertEqual(local.clamp_frame_depth(-3), 1)
+        # Canonical clampIframeDepth semantics: invalid / < 1 -> default (3),
+        # capped at hard_max (10).
+        self.assertEqual(local.clamp_frame_depth(0), local.DEFAULT_MAX_FRAME_DEPTH)
+        self.assertEqual(local.clamp_frame_depth(-3), local.DEFAULT_MAX_FRAME_DEPTH)
         self.assertEqual(local.clamp_frame_depth(1), 1)
         self.assertEqual(local.clamp_frame_depth(3), 3)
         self.assertEqual(local.clamp_frame_depth(5), 5)
-        self.assertEqual(local.clamp_frame_depth(99), local.DEFAULT_MAX_FRAME_DEPTH)
+        self.assertEqual(local.clamp_frame_depth(99), local.HARD_MAX_FRAME_DEPTH)
         self.assertEqual(local.clamp_frame_depth("not-a-number"), local.DEFAULT_MAX_FRAME_DEPTH)
         self.assertEqual(local.clamp_frame_depth(None), local.DEFAULT_MAX_FRAME_DEPTH)
 
