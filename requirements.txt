@@ -1,2 +1,6 @@
-selenium>=3
+# CI/dev test env pin only — setup.py keeps `selenium>=3` for end users.
+# selenium 4.28+ drops Python 3.8, and on 3.9/3.10 its newer webdriver/urllib3
+# connection handling wedges geckodriver on the responsive test (CI hung at
+# 4.36.0); 4.27.1 is the last line that runs cleanly across 3.8-3.10.
+selenium==4.27.1
 requests==2.*
