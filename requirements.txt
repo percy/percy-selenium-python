@@ -4,5 +4,5 @@
 # responsive test in CI (hung at 4.36.0). 4.27.x is the last line proven clean
 # across 3.8-3.10; revisit once that wedge is root-caused so CI can track
 # current Selenium.
-selenium>=4,<4.28
+selenium>=4.45.0,<4.46
 requests==2.*
