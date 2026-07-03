@@ -393,7 +393,7 @@ class TestGetSerializedDomPageUrlFailure(unittest.TestCase):
             def __init__(self):
                 self.calls = 0
 
-            def execute_script(self, _script, *args):
+            def execute_script(self, _script, *_args):
                 self.calls += 1
                 if self.calls == 1:
                     return {'html': '<html/>'}  # main serialize
