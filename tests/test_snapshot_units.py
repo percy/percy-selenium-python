@@ -3,6 +3,7 @@
 fallback paths. These run as plain unittests (no Percy CLI needed) and
 target branches the end-to-end suite in test_snapshot.py does not reach."""
 import importlib
+import json
 import os
 import unittest
 from unittest.mock import patch, MagicMock, Mock
@@ -56,6 +57,65 @@ class TestGetSerializedDomIframe(unittest.TestCase):
         # the un-parseable iframe is skipped; serialize result still returns
         self.assertEqual(result['cookies'], {'c': 1})
         self.assertNotIn('corsIframes', result)
+
+
+class TestConfigMergeIntoSerialize(unittest.TestCase):
+    """PER-8053: the global .percy.yml `snapshot` config must be deep-merged
+    into the per-call serialize options (per-call wins at the leaves) BEFORE
+    PercyDOM.serialize. Regression guard: a CORS-iframe refactor once dropped
+    this merge so config-only keys never reached serialize."""
+
+    def _capture_serialize(self, percy_config, **kwargs):
+        """Run get_serialized_dom against a stub driver and return the exact
+        options object handed to PercyDOM.serialize."""
+        captured = {}
+        driver = MagicMock()
+
+        def _exec(script, *_args):
+            if 'PercyDOM.serialize' in script:
+                start = script.index('serialize(') + len('serialize(')
+                end = script.rindex(')')
+                captured['opts'] = json.loads(script[start:end])
+                return {'html': '<html></html>'}
+            return None
+
+        driver.execute_script.side_effect = _exec
+        local.get_serialized_dom(driver, {'c': 1}, percy_config=percy_config, **kwargs)
+        return captured['opts']
+
+    def test_config_only_key_reaches_serialize(self):
+        opts = self._capture_serialize({'snapshot': {'enableJavaScript': True}})
+        self.assertTrue(opts.get('enableJavaScript'))
+
+    def test_per_call_option_wins_over_config(self):
+        opts = self._capture_serialize(
+            {'snapshot': {'percyCSS': 'from-config'}}, percyCSS='from-call')
+        self.assertEqual(opts['percyCSS'], 'from-call')
+
+    def test_deep_merge_keeps_sibling_and_per_call_nested_wins(self):
+        opts = self._capture_serialize(
+            {'snapshot': {'discovery': {'networkIdleTimeout': 50, 'disableCache': False}}},
+            discovery={'disableCache': True})
+        self.assertEqual(opts['discovery']['networkIdleTimeout'], 50)  # config sibling kept
+        self.assertTrue(opts['discovery']['disableCache'])             # per-call nested wins
+
+    def test_no_config_leaves_per_call_untouched(self):
+        opts = self._capture_serialize(None, percyCSS='only-call')
+        self.assertEqual(opts, {'percyCSS': 'only-call'})
+
+    # --- helper defensive branches (called directly: these degrade to the raw
+    #     per-call kwargs rather than raising, for any malformed config shape) ---
+    def test_merge_helper_non_dict_config_returns_kwargs(self):
+        self.assertEqual(
+            local._merge_config_into_serialize_options('nope', {'a': 1}), {'a': 1})
+
+    def test_merge_helper_non_dict_snapshot_returns_kwargs(self):
+        self.assertEqual(
+            local._merge_config_into_serialize_options({'snapshot': 'x'}, {'a': 1}), {'a': 1})
+
+    def test_merge_helper_empty_snapshot_returns_kwargs(self):
+        self.assertEqual(
+            local._merge_config_into_serialize_options({'snapshot': {}}, {'a': 1}), {'a': 1})
 
 
 class TestGetResponsiveWidths(unittest.TestCase):

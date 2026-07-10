@@ -673,6 +673,34 @@ class PercyContextLost(Exception):
         super().__init__(message)
         self.partial_capture = partial_capture or []
 
+def _deep_merge(base, override):
+    """Recursively merge `override` onto `base`. Nested dicts are merged key by
+    key; per-call (override) values win at the leaves; lists and scalars
+    replace rather than concatenate/merge."""
+    merged = dict(base)
+    for key, value in override.items():
+        existing = merged.get(key)
+        merged[key] = (
+            _deep_merge(existing, value)
+            if isinstance(existing, dict) and isinstance(value, dict)
+            else value
+        )
+    return merged
+
+
+def _merge_config_into_serialize_options(percy_config, kwargs):
+    """PER-8053: deep-merge the global .percy.yml `snapshot` config into the
+    per-call serialize options so config-only keys (e.g. enableJavaScript,
+    percyCSS, discovery.*) reach PercyDOM.serialize. Per-call kwargs win at the
+    leaves. Defensive against a missing/non-dict `config.snapshot`."""
+    if not isinstance(percy_config, dict):
+        return kwargs
+    config_snapshot = percy_config.get('snapshot') or {}
+    if not isinstance(config_snapshot, dict) or not config_snapshot:
+        return kwargs
+    return _deep_merge(config_snapshot, kwargs)
+
+
 def _resolve_readiness_config(percy_config, kwargs):
     """Shallow-merge global (.percy.yml) readiness config with per-snapshot
     override. Per-snapshot keys win; unspecified keys are inherited.
@@ -783,6 +811,13 @@ def get_serialized_dom(driver, cookies, percy_config=None, percy_dom_script=None
     #    per width.
     if not skip_readiness:
         readiness_diagnostics = _wait_for_ready(driver, percy_config, kwargs)
+    # PER-8053: deep-merge the global .percy.yml snapshot config into the
+    # per-call serialize options (per-call wins) BEFORE serialize, so config-only
+    # keys reach PercyDOM.serialize. Readiness ran above on the raw per-call
+    # kwargs, so any `readiness` pulled in from config here is harmless — it's
+    # stripped next. The merged kwargs also feed the CORS-iframe context below
+    # (`serialize_options`), so config reaches nested-frame serialize too.
+    kwargs = _merge_config_into_serialize_options(percy_config, kwargs)
     # Strip `readiness` from kwargs before forwarding — it's an SDK-local
     # concern; the CLI already has it from healthcheck and a top-level
     # `readiness` in the POST body is brittle against future validators.
