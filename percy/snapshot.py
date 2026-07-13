@@ -94,6 +94,14 @@ def fetch_percy_dom():
     response.raise_for_status()
     return response.text
 
+def _deep_merge(base, override):
+    merged = dict(base)
+    for key, value in override.items():
+        existing = merged.get(key)
+        merged[key] = _deep_merge(existing, value) \
+            if isinstance(existing, dict) and isinstance(value, dict) else value
+    return merged
+
 # pylint: disable=too-many-arguments, too-many-branches, too-many-locals
 def create_region(
     boundingBox=None,
@@ -1030,19 +1038,23 @@ def percy_snapshot(driver, name, **kwargs):
         expose_closed_shadow_roots(driver)
         cookies = driver.get_cookies()
 
+        # Merge .percy.yml config options with snapshot options (snapshot options take priority)
+        config_options = data['config'].get('snapshot') or {}
+        merged_kwargs = _deep_merge(config_options, kwargs)
+
         # Serialize and capture the DOM
-        if is_responsive_snapshot_capture(data['config'], **kwargs):
+        if is_responsive_snapshot_capture(data['config'], **merged_kwargs):
             dom_snapshot = capture_responsive_dom(
                 driver=driver,
                 cookies=cookies,
                 config=data['config'],
                 percy_dom_script=percy_dom_script,
-                **kwargs,
+                **merged_kwargs,
             )
         else:
             dom_snapshot = get_serialized_dom(
                 driver, cookies, percy_dom_script=percy_dom_script,
-                percy_config=data.get('config'), **kwargs)
+                percy_config=data.get('config'), **merged_kwargs)
 
         # Strip SDK-local `readiness` from the snapshot POST body. The CLI
         # already has it via healthcheck; sending it again here risks future

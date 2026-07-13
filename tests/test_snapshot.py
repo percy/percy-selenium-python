@@ -498,6 +498,59 @@ class TestPercySnapshot(unittest.TestCase):
         "/docs/percy/integrate/functional-and-visual", str(context.exception))
 
 
+# pylint: disable=too-few-public-methods
+class TestConfigDeepMerge(unittest.TestCase):
+    """Unit test for deep-merging .percy.yml config with per-snapshot options
+    using a fully-mocked WebDriver, so it never launches a real browser."""
+
+    def setUp(self):
+        local.is_percy_enabled.cache_clear()
+        local.fetch_percy_dom.cache_clear()
+        httpretty.enable()
+
+    def tearDown(self):
+        httpretty.disable()
+        httpretty.reset()
+
+    @patch('selenium.webdriver.Chrome')
+    def test_deep_merges_config_with_per_snapshot_options(self, MockChrome):
+        driver = MockChrome.return_value
+        # Capture the argument passed to PercyDOM.serialize(...)
+        serialize_calls = []
+
+        def execute_script(script):
+            if script.startswith('return PercyDOM.serialize('):
+                serialize_calls.append(
+                    json.loads(script[len('return PercyDOM.serialize('):-1]))
+                return { 'html': 'some_dom' }
+            return ''
+
+        driver.execute_script.side_effect = execute_script
+        driver.get_cookies.return_value = []
+        driver.find_elements.return_value = []
+        mock_logger()
+        # config carries a nested `discovery` object with two leaves.
+        mock_healthcheck(config={
+            'snapshot': {
+                'discovery': { 'networkIdleTimeout': 50, 'disableCache': False }
+            }
+        })
+        mock_snapshot()
+
+        with patch.object(driver, 'current_url', 'http://localhost:8000/'):
+            with patch.object(driver, 'capabilities', new={ 'browserName': 'chrome' }):
+                # per-call overrides only one leaf of the nested discovery object
+                percy_snapshot(driver, 'Snapshot 1',
+                               discovery={ 'disableCache': True })
+
+        self.assertEqual(len(serialize_calls), 1)
+        serialized = serialize_calls[0]
+        # sibling leaf kept from config, overridden leaf takes per-call value
+        self.assertEqual(serialized['discovery'], {
+            'networkIdleTimeout': 50, 'disableCache': True
+        })
+
+
 class TestReadinessGate(unittest.TestCase):
     """Unit tests for _wait_for_ready / _resolve_readiness_config using a
     fully-mocked WebDriver. Bypasses real geckodriver/Firefox traffic, so
@@ -633,6 +686,53 @@ class TestReadinessGate(unittest.TestCase):
             driver, cookies=[], percy_config={}, readiness={'preset': 'balanced'})
 
         self.assertEqual(dom_snapshot['readiness_diagnostics'], {'passed': True})
+
+class TestConfigPerCallMergePrecedence(unittest.TestCase):
+    """Unit tests for merging .percy.yml `config.snapshot` options with
+    per-snapshot kwargs before PercyDOM.serialize. Per-call kwargs win;
+    config-only keys are still forwarded to serialize."""
+
+    def setUp(self):
+        local.is_percy_enabled.cache_clear()
+        local.fetch_percy_dom.cache_clear()
+        httpretty.enable()
+
+    def tearDown(self):
+        httpretty.disable()
+        httpretty.reset()
+
+    def test_config_and_per_call_options_merge_into_serialize(self):
+        """`config.snapshot` options reach PercyDOM.serialize, and a per-call
+        kwarg overrides the same key from config (per-call priority)."""
+        mock_healthcheck(config={'snapshot': {
+            'enableJavaScript': True, 'percyCSS': 'FROM_CONFIG'}})
+        mock_snapshot()
+
+        # Fully-mocked driver so we can capture the exact string passed to
+        # execute_script for the PercyDOM.serialize call. No real browser.
+        driver = Mock()
+        driver.execute_script.return_value = {'html': '<html></html>'}
+        driver.execute_async_script.return_value = None
+        driver.get_cookies.return_value = []
+        driver.current_url = 'http://localhost:8000/'
+        driver.find_elements.return_value = []
+
+        percy_snapshot(driver, 'name', percyCSS='FROM_CALL')
+
+        serialize_call = next(
+            c for c in driver.execute_script.call_args_list
+            if 'PercyDOM.serialize' in c.args[0]
+        )
+        serialize_options = json.loads(
+            serialize_call.args[0]
+            .split('PercyDOM.serialize(', 1)[1]
+            .rsplit(')', 1)[0]
+        )
+        # config-only key reached serialize
+        self.assertEqual(serialize_options['enableJavaScript'], True)
+        # per-call kwarg overrode the config value
+        self.assertEqual(serialize_options['percyCSS'], 'FROM_CALL')
+
 
 class TestPercyScreenshot(unittest.TestCase):
     @classmethod
