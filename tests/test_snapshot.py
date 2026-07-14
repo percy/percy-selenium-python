@@ -140,7 +140,11 @@ class TestResolveCliApiAddress(unittest.TestCase):
     def test_rejects_remote_host(self):
         self.assertEqual(_resolve_cli_api_address(), DEFAULT_PERCY_CLI_API)
 
-    @patch.dict(os.environ, {'PERCY_CLI_API': 'http://169.254.169.254/latest/meta-data'}, clear=True)
+    @patch.dict(
+        os.environ,
+        {'PERCY_CLI_API': 'http://169.254.169.254/latest/meta-data'},
+        clear=True,
+    )
     def test_rejects_link_local_ssrf_target(self):
         self.assertEqual(_resolve_cli_api_address(), DEFAULT_PERCY_CLI_API)
 
