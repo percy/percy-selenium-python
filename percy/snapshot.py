@@ -919,7 +919,10 @@ def change_window_dimension_and_wait(driver, width, height, resizeCount, wait_fo
     # resize listener; its value is no longer polled (see the settle note below).
     # pylint: disable=unused-argument
     try:
-        if CDP_SUPPORT_SELENIUM and _is_chrome(driver) and not _cdp_rejected(driver):
+        # Exact, case-sensitive match as in earlier releases, so drivers that report
+        # e.g. "Chrome" keep the plain window resize instead of switching to CDP.
+        if CDP_SUPPORT_SELENIUM and (driver.capabilities or {}).get('browserName') == 'chrome' \
+                and not _cdp_rejected(driver):
             print(f'Attempting to resize using CDP for width {width} and height {height}')
             try:
                 driver.execute_cdp_cmd('Emulation.setDeviceMetricsOverride', {

@@ -178,13 +178,12 @@ class TestChangeWindowDimension(unittest.TestCase):
         self.assertEqual(driver.set_window_size.call_count, 2)
 
     @patch('percy.snapshot.RESIZE_SETTLE_SECONDS', 0)
-    def test_browser_name_is_case_insensitive(self):
+    def test_non_lowercase_chrome_keeps_window_resize(self):
         driver = MagicMock()
         driver.capabilities = {'browserName': 'Chrome'}
         local.change_window_dimension_and_wait(driver, 800, 600, 1)
-        driver.execute_cdp_cmd.assert_called_once_with('Emulation.setDeviceMetricsOverride', {
-            'height': 600, 'width': 800, 'deviceScaleFactor': 1, 'mobile': False})
-        driver.set_window_size.assert_not_called()
+        driver.execute_cdp_cmd.assert_not_called()
+        driver.set_window_size.assert_called_once_with(800, 600)
 
     @patch('percy.snapshot.RESIZE_SETTLE_SECONDS', 0)
     def test_stops_using_cdp_after_remote_rejects_it(self):
