@@ -19,6 +19,37 @@ class TestLog(unittest.TestCase):
         local.log('hello', 'info')  # should not raise
 
 
+class TestCliApiAddress(unittest.TestCase):
+    def _resolve(self, env):
+        cleared = {k: v for k, v in os.environ.items()
+                   if k not in ('PERCY_CLI_API', 'PERCY_SERVER_ADDRESS')}
+        try:
+            with patch.dict(os.environ, {**cleared, **env}, clear=True):
+                importlib.reload(local)
+                return local.PERCY_CLI_API
+        finally:
+            importlib.reload(local)
+
+    def test_prefers_percy_cli_api(self):
+        self.assertEqual(self._resolve({
+            'PERCY_CLI_API': 'http://localhost:1111',
+            'PERCY_SERVER_ADDRESS': 'http://localhost:2222',
+        }), 'http://localhost:1111')
+
+    def test_falls_back_to_percy_server_address(self):
+        self.assertEqual(self._resolve({'PERCY_SERVER_ADDRESS': 'http://localhost:2222'}),
+                         'http://localhost:2222')
+
+    def test_empty_percy_cli_api_falls_back_to_percy_server_address(self):
+        self.assertEqual(self._resolve({
+            'PERCY_CLI_API': '',
+            'PERCY_SERVER_ADDRESS': 'http://localhost:2222',
+        }), 'http://localhost:2222')
+
+    def test_defaults_to_5338(self):
+        self.assertEqual(self._resolve({}), 'http://localhost:5338')
+
+
 class TestWaitForReady(unittest.TestCase):
     def _driver(self):
         driver = MagicMock()
@@ -145,6 +176,36 @@ class TestChangeWindowDimension(unittest.TestCase):
         driver.execute_script.return_value = 1  # resize counter already matches
         local.change_window_dimension_and_wait(driver, 800, 600, 1)
         self.assertEqual(driver.set_window_size.call_count, 2)
+
+    @patch('percy.snapshot.RESIZE_SETTLE_SECONDS', 0)
+    def test_non_lowercase_chrome_keeps_window_resize(self):
+        driver = MagicMock()
+        driver.capabilities = {'browserName': 'Chrome'}
+        local.change_window_dimension_and_wait(driver, 800, 600, 1)
+        driver.execute_cdp_cmd.assert_not_called()
+        driver.set_window_size.assert_called_once_with(800, 600)
+
+    @patch('percy.snapshot.RESIZE_SETTLE_SECONDS', 0)
+    def test_stops_using_cdp_after_remote_rejects_it(self):
+        driver = MagicMock()
+        driver.capabilities = {'browserName': 'chrome'}
+        driver.execute_cdp_cmd.side_effect = AssertionError(
+            'Unrecognised command executeCdpCommand')
+        local.change_window_dimension_and_wait(driver, 375, 600, 1)
+        local.change_window_dimension_and_wait(driver, 1280, 600, 2)
+        self.assertEqual(driver.execute_cdp_cmd.call_count, 1)
+        self.assertEqual(driver.set_window_size.call_args_list,
+                         [((375, 600),), ((1280, 600),)])
+
+    @patch('percy.snapshot.RESIZE_SETTLE_SECONDS', 0)
+    def test_keeps_using_cdp_after_other_failures(self):
+        driver = MagicMock()
+        driver.capabilities = {'browserName': 'chrome'}
+        driver.execute_cdp_cmd.side_effect = [Exception('target closed'), {}]
+        local.change_window_dimension_and_wait(driver, 375, 600, 1)
+        local.change_window_dimension_and_wait(driver, 1280, 600, 2)
+        self.assertEqual(driver.execute_cdp_cmd.call_count, 2)
+        driver.set_window_size.assert_called_once_with(375, 600)
 
 
 class TestResponsiveSleep(unittest.TestCase):
@@ -380,6 +441,48 @@ class TestExposeClosedShadowRootsEdgeCases(unittest.TestCase):
 
         local.expose_closed_shadow_roots(StubDriver())
         self.assertEqual(cdp_calls, [])
+
+    def test_browser_name_is_case_insensitive(self):
+        driver = MagicMock()
+        driver.capabilities = {'browserName': 'Chrome'}
+        driver.execute_cdp_cmd.return_value = {}
+        local.expose_closed_shadow_roots(driver)
+        driver.execute_cdp_cmd.assert_any_call('DOM.enable', {})
+
+    def test_skips_cdp_after_remote_rejects_it(self):
+        driver = MagicMock()
+        driver.capabilities = {'browserName': 'chrome'}
+        driver.execute_cdp_cmd.side_effect = AssertionError(
+            'Unrecognised command executeCdpCommand')
+        local.expose_closed_shadow_roots(driver)
+        local.expose_closed_shadow_roots(driver)
+        driver.execute_cdp_cmd.assert_called_once_with('DOM.enable', {})
+
+    def test_rejection_is_shared_with_responsive_resize(self):
+        driver = MagicMock()
+        driver.capabilities = {'browserName': 'chrome'}
+        driver.execute_cdp_cmd.side_effect = Exception(
+            'Message: unknown command: executeCdpCommand')
+        local.expose_closed_shadow_roots(driver)
+        with patch('percy.snapshot.RESIZE_SETTLE_SECONDS', 0):
+            local.change_window_dimension_and_wait(driver, 375, 600, 1)
+        driver.execute_cdp_cmd.assert_called_once_with('DOM.enable', {})
+        driver.set_window_size.assert_called_once_with(375, 600)
+
+    def test_unhashable_driver_is_never_remembered(self):
+        class UnhashableDriver:  # pylint: disable=too-few-public-methods
+            __hash__ = None
+            capabilities = {'browserName': 'chrome'}
+            calls = 0
+
+            def execute_cdp_cmd(self, _cmd, _params):
+                UnhashableDriver.calls += 1
+                raise AssertionError('Unrecognised command executeCdpCommand')
+
+        driver = UnhashableDriver()
+        local.expose_closed_shadow_roots(driver)
+        local.expose_closed_shadow_roots(driver)
+        self.assertEqual(UnhashableDriver.calls, 2)
 
     def test_missing_object_ids_are_skipped(self):
         driver = MagicMock()

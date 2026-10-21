@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from functools import lru_cache
 from time import sleep
 from urllib.parse import urlparse
+from weakref import WeakSet
 import requests
 
 from selenium.webdriver import __version__ as SELENIUM_VERSION
@@ -19,8 +20,12 @@ ENV_INFO = ['selenium/' + SELENIUM_VERSION, 'python/' + platform.python_version(
 def _get_bool_env(key):
     return os.environ.get(key, "").lower() == "true"
 
-# Maybe get the CLI API address from the environment
-PERCY_CLI_API = os.environ.get('PERCY_CLI_API') or 'http://localhost:5338'
+# `percy exec --port N` exports PERCY_SERVER_ADDRESS (not PERCY_CLI_API) to the child
+PERCY_CLI_API = (
+    os.environ.get('PERCY_CLI_API') or
+    os.environ.get('PERCY_SERVER_ADDRESS') or
+    'http://localhost:5338'
+)
 PERCY_DEBUG = os.environ.get('PERCY_LOGLEVEL') == 'debug'
 RESPONSIVE_CAPTURE_SLEEP_TIME = (
     os.environ.get('RESPONSIVE_CAPTURE_SLEEP_TIME') or
@@ -39,6 +44,34 @@ except (TypeError, ValueError):
 LABEL = '[\u001b[35m' + ('percy:python' if PERCY_DEBUG else 'percy') + '\u001b[39m]'
 CDP_SUPPORT_SELENIUM = (str(SELENIUM_VERSION)[0].isdigit() and int(
     str(SELENIUM_VERSION)[0]) >= 4) if SELENIUM_VERSION else False
+# Drivers whose CDP command was rejected. Selenium 4.28+ puts execute_cdp_cmd on
+# every Remote driver, but only a ChromiumRemoteConnection (chosen when the
+# requested browserName is exactly "chrome") knows `executeCdpCommand`; others
+# raise "Unrecognised command" on every call. That never recovers mid-session,
+# so stop sending CDP to the driver instead of failing on each resize/snapshot.
+_CDP_REJECTED_DRIVERS = WeakSet()
+_CDP_REJECTION_MARKERS = ('unrecognised command', 'unknown command', 'unknown method')
+
+def _is_chrome(driver):
+    try:
+        return str((driver.capabilities or {}).get('browserName', '')).lower() == 'chrome'
+    except Exception:  # pylint: disable=broad-except
+        return False
+
+def _cdp_rejected(driver):
+    try:
+        return driver in _CDP_REJECTED_DRIVERS
+    except TypeError:
+        return False
+
+def _remember_cdp_rejection(driver, error):
+    message = str(error).lower()
+    if not any(marker in message for marker in _CDP_REJECTION_MARKERS):
+        return
+    try:
+        _CDP_REJECTED_DRIVERS.add(driver)
+    except TypeError:
+        pass
 
 def log(message, lvl = 'info'):
     message = f'{LABEL} {message}'
@@ -478,17 +511,16 @@ def expose_closed_shadow_roots(driver):
     # Restrict to Chromium, mirroring the responsive-resize guard below
     # (browserName == 'chrome'). Closed shadow DOM via CDP is Chromium-only by
     # design, so non-Chromium drivers correctly no-op here.
-    try:
-        browser_name = str((driver.capabilities or {}).get('browserName', '')).lower()
-    except Exception:  # pylint: disable=broad-except
-        browser_name = ''
-    if browser_name != 'chrome':
+    if not _is_chrome(driver):
         log("Skipping closed shadow DOM capture: CDP requires a Chromium browser",
             "debug")
+        return
+    if _cdp_rejected(driver):
         return
     try:
         driver.execute_cdp_cmd("DOM.enable", {})
     except Exception as e:  # pylint: disable=broad-except
+        _remember_cdp_rejection(driver, e)
         log(f"CDP unavailable for closed shadow DOM capture: {e}", "debug")
         return
     try:
@@ -887,10 +919,17 @@ def change_window_dimension_and_wait(driver, width, height, resizeCount, wait_fo
     # resize listener; its value is no longer polled (see the settle note below).
     # pylint: disable=unused-argument
     try:
-        if CDP_SUPPORT_SELENIUM and driver.capabilities['browserName'] == 'chrome':
+        # Exact, case-sensitive match as in earlier releases, so drivers that report
+        # e.g. "Chrome" keep the plain window resize instead of switching to CDP.
+        if CDP_SUPPORT_SELENIUM and (driver.capabilities or {}).get('browserName') == 'chrome' \
+                and not _cdp_rejected(driver):
             print(f'Attempting to resize using CDP for width {width} and height {height}')
-            driver.execute_cdp_cmd('Emulation.setDeviceMetricsOverride', { 'height': height,
-                                'width': width, 'deviceScaleFactor': 1, 'mobile': False })
+            try:
+                driver.execute_cdp_cmd('Emulation.setDeviceMetricsOverride', {
+                    'height': height, 'width': width, 'deviceScaleFactor': 1, 'mobile': False })
+            except Exception as e:
+                _remember_cdp_rejection(driver, e)
+                raise
         else:
             #driver.execute_script(f"window.resizeTo({width}, {height});")
             driver.set_window_size(width, height)
