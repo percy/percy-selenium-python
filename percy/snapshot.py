@@ -114,7 +114,7 @@ def _bidi_available(driver):
     try:
         if not isinstance((driver.capabilities or {}).get('webSocketUrl'), str):
             return False
-        # pylint: disable=import-outside-toplevel
+        # pylint: disable=import-outside-toplevel,no-name-in-module
         from selenium.webdriver.common.bidi.browsing_context import BrowsingContext
         from selenium.webdriver.common.bidi.common import command_builder  # pylint: disable=unused-import
         return hasattr(BrowsingContext, 'set_viewport') and hasattr(driver, '_start_bidi')
@@ -124,7 +124,7 @@ def _bidi_available(driver):
 def _bidi_command(driver, method, params):
     # Raw command instead of the typed helpers: their signatures changed between
     # 4.32 and 4.50 (e.g. 4.32's set_viewport cannot send `viewport: null`).
-    # pylint: disable=import-outside-toplevel,protected-access
+    # pylint: disable=import-outside-toplevel,protected-access,no-name-in-module
     from selenium.webdriver.common.bidi.common import command_builder
     if not getattr(driver, '_websocket_connection', None):
         driver._start_bidi()
@@ -667,11 +667,10 @@ def _expose_closed_shadow_roots_classic(driver):
                 root = host.shadow_root
             except Exception:  # pylint: disable=broad-except
                 continue
-            if root is None or getattr(root, 'id', None) is None:
-                continue
-            driver.execute_script(_SET_CLOSED_SHADOW_JS, host, root)
-            exposed += 1
-            scopes.append(root)
+            if getattr(root, 'id', None) is not None:
+                driver.execute_script(_SET_CLOSED_SHADOW_JS, host, root)
+                exposed += 1
+                scopes.append(root)
     if exposed:
         log(f"Exposed {exposed} closed shadow root(s) via WebDriver", "debug")
     return exposed
