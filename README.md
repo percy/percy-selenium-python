@@ -60,6 +60,20 @@ $ percy exec -- [python test command]
 - `name` (**required**) - The snapshot name; must be unique to each snapshot
 - `**kwargs` - [See per-snapshot configuration options](https://www.browserstack.com/docs/percy/take-percy-snapshots/overview#per-snapshot-configuration)
 
+The SDK finds the Percy CLI at `PERCY_CLI_API`, then `PERCY_SERVER_ADDRESS` (set by
+`percy exec --port N`), then `http://localhost:5338`.
+
+Responsive capture (`responsiveSnapshotCapture`) sets each width exactly: through CDP on
+Chrome and Edge, and through WebDriver BiDi on other browsers when the session was started
+with `webSocketUrl: true` (Selenium 4.32+). Without either, the browser window is resized,
+which cannot go below the OS minimum window width (about 500px). Set
+`exactResponsiveWidth: False` per snapshot, or in `.percy.yml`, to keep the previous behaviour.
+
+Closed shadow roots are captured through CDP or BiDi, or on local drivers through WebDriver's
+Get Element Shadow Root (at most `PERCY_CLOSED_SHADOW_MAX_HOSTS` custom elements, default
+200). On remote sessions without BiDi that last strategy is skipped unless
+`PERCY_CLOSED_SHADOW_CLASSIC=true`.
+
 ### Migrating Config
 
 If you have a previous Percy configuration file, migrate it to the newest version with the
