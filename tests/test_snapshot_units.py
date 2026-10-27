@@ -173,15 +173,15 @@ class TestChangeWindowDimension(unittest.TestCase):
         driver.capabilities = {'browserName': 'firefox'}
         # first resize attempt raises, fallback set_window_size succeeds
         driver.set_window_size.side_effect = [Exception('resize failed'), None]
-        driver.execute_script.return_value = 1  # resize counter already matches
+        driver.execute_script.return_value = 800  # innerWidth already exact
         local.change_window_dimension_and_wait(driver, 800, 600, 1)
         self.assertEqual(driver.set_window_size.call_count, 2)
 
     @patch('percy.snapshot.RESIZE_SETTLE_SECONDS', 0)
-    def test_non_lowercase_chrome_keeps_window_resize(self):
+    def test_legacy_mode_keeps_exact_chrome_match(self):
         driver = MagicMock()
         driver.capabilities = {'browserName': 'Chrome'}
-        local.change_window_dimension_and_wait(driver, 800, 600, 1)
+        local.change_window_dimension_and_wait(driver, 800, 600, 1, exact=False)
         driver.execute_cdp_cmd.assert_not_called()
         driver.set_window_size.assert_called_once_with(800, 600)
 
@@ -607,3 +607,425 @@ class TestResponsiveDebugDump(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def _driver(browser, **caps):
+    driver = MagicMock()
+    driver.capabilities = {'browserName': browser, **caps}
+    return driver
+
+
+class TestExactViewport(unittest.TestCase):
+    def setUp(self):
+        patcher = patch('percy.snapshot.RESIZE_SETTLE_SECONDS', 0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_chromium_family_uses_cdp(self):
+        for name in ('chrome', 'Chrome', 'chromium', 'MicrosoftEdge', 'msedge',
+                     'chrome-headless-shell'):
+            driver = _driver(name)
+            driver.execute_script.return_value = 375
+            mechanism = local.change_window_dimension_and_wait(driver, 375, 600, 1)
+            self.assertEqual(mechanism, 'cdp', name)
+            driver.execute_cdp_cmd.assert_called_once_with(
+                'Emulation.setDeviceMetricsOverride',
+                {'height': 600, 'width': 375, 'deviceScaleFactor': 1, 'mobile': False})
+            driver.set_window_size.assert_not_called()
+
+    def test_firefox_and_safari_never_use_cdp(self):
+        for name in ('firefox', 'Safari'):
+            driver = _driver(name)
+            driver.execute_script.return_value = 1280
+            mechanism = local.change_window_dimension_and_wait(driver, 1280, 600, 1)
+            self.assertEqual(mechanism, 'window', name)
+            driver.execute_cdp_cmd.assert_not_called()
+
+    def test_cdp_skipped_when_executor_lacks_the_command(self):
+        # Survives `python -O`, where Selenium's "Unrecognised command" assert
+        # (and so its message) disappears.
+        driver = _driver('MicrosoftEdge')
+        driver.command_executor._commands = {'newSession': ('POST', '/session')}
+        driver.command_executor.extra_commands = {}
+        driver.execute_script.return_value = 1280
+        self.assertEqual(local.change_window_dimension_and_wait(driver, 1280, 600, 1), 'window')
+        driver.execute_cdp_cmd.assert_not_called()
+
+    def test_cdp_used_when_executor_registers_the_command(self):
+        driver = _driver('chrome')
+        driver.command_executor._commands = {'executeCdpCommand': ('POST', '/x')}
+        driver.execute_script.return_value = 375
+        self.assertEqual(local.change_window_dimension_and_wait(driver, 375, 600, 1), 'cdp')
+
+    def test_cdp_method_error_does_not_disable_cdp(self):
+        driver = _driver('chrome')
+        driver.execute_cdp_cmd.side_effect = [
+            Exception("'Emulation.x' wasn't found: unknown method"), {}]
+        driver.execute_script.return_value = 375
+        local.change_window_dimension_and_wait(driver, 375, 600, 1)
+        local.change_window_dimension_and_wait(driver, 375, 600, 2)
+        self.assertEqual(driver.execute_cdp_cmd.call_count, 2)
+
+    @patch('percy.snapshot._bidi_command')
+    @patch('percy.snapshot._bidi_available', return_value=True)
+    def test_bidi_set_viewport_when_session_has_websocket(self, _available, bidi):
+        driver = _driver('firefox', webSocketUrl='ws://localhost/session')
+        driver.current_window_handle = 'ctx-1'
+        driver.execute_script.return_value = 375
+        self.assertEqual(local.change_window_dimension_and_wait(driver, 375, 600, 1), 'bidi')
+        bidi.assert_called_once_with(driver, 'browsingContext.setViewport', {
+            'context': 'ctx-1', 'viewport': {'width': 375, 'height': 600},
+            'devicePixelRatio': 1})
+        driver.set_window_size.assert_not_called()
+
+    @patch('percy.snapshot._bidi_command', side_effect=Exception('no bidi'))
+    @patch('percy.snapshot._bidi_available', return_value=True)
+    def test_bidi_failure_falls_back_to_window(self, _available, _bidi):
+        driver = _driver('firefox')
+        driver.execute_script.return_value = 1280
+        self.assertEqual(local.change_window_dimension_and_wait(driver, 1280, 600, 1), 'window')
+        driver.set_window_size.assert_called_once_with(1280, 600)
+
+    def test_window_path_corrects_border_once(self):
+        driver = _driver('firefox')
+        driver.execute_script.side_effect = [1272, 1280]
+        local.change_window_dimension_and_wait(driver, 1280, 600, 1)
+        self.assertEqual(driver.set_window_size.call_args_list,
+                         [((1280, 600),), ((1288, 600),)])
+
+    @patch('percy.snapshot.log')
+    def test_window_path_warns_once_per_session_when_still_wrong(self, mock_log):
+        driver = _driver('firefox')
+        driver.session_id = 'warn-once-session'
+        driver.execute_script.return_value = 500
+        local.change_window_dimension_and_wait(driver, 375, 600, 1)
+        local.change_window_dimension_and_wait(driver, 390, 600, 2)
+        warns = [c for c in mock_log.call_args_list if c.args[1:] == ('warn',)]
+        self.assertEqual(len(warns), 1)
+        self.assertIn('firefox', warns[0].args[0])
+        self.assertIn('webSocketUrl: true', warns[0].args[0])
+
+    def test_no_wait_skips_verification(self):
+        driver = _driver('firefox')
+        local.change_window_dimension_and_wait(driver, 375, 600, 1, wait_for_resize=False)
+        driver.execute_script.assert_not_called()
+
+
+class TestExactResponsiveWidthPrecedence(unittest.TestCase):
+    def test_defaults_to_true(self):
+        self.assertTrue(local._exact_responsive_width({}, {}))
+        self.assertTrue(local._exact_responsive_width(None, {}))
+
+    def test_config_value(self):
+        config = {'snapshot': {'exactResponsiveWidth': False}}
+        self.assertFalse(local._exact_responsive_width(config, {}))
+
+    def test_per_snapshot_wins(self):
+        config = {'snapshot': {'exactResponsiveWidth': False}}
+        self.assertTrue(local._exact_responsive_width(config, {'exactResponsiveWidth': True}))
+        self.assertFalse(local._exact_responsive_width({}, {'exact_responsive_width': False}))
+
+
+class TestRestoreViewport(unittest.TestCase):
+    def test_cdp_is_cleared_not_reapplied(self):
+        driver = _driver('chrome')
+        local._restore_viewport(driver, 1000, 800, {'cdp'})
+        driver.execute_cdp_cmd.assert_called_once_with('Emulation.clearDeviceMetricsOverride', {})
+        driver.set_window_size.assert_not_called()
+
+    @patch('percy.snapshot._bidi_command')
+    def test_bidi_viewport_is_reset(self, bidi):
+        driver = _driver('firefox')
+        driver.current_window_handle = 'ctx'
+        local._restore_viewport(driver, 1000, 800, {'bidi'})
+        bidi.assert_called_once_with(driver, 'browsingContext.setViewport', {
+            'context': 'ctx', 'viewport': None, 'devicePixelRatio': None})
+
+    def test_window_is_resized_back(self):
+        driver = _driver('firefox')
+        local._restore_viewport(driver, 1000, 800, {'window'})
+        driver.set_window_size.assert_called_once_with(1000, 800)
+
+    def test_failures_are_swallowed(self):
+        driver = _driver('chrome')
+        driver.execute_cdp_cmd.side_effect = Exception('gone')
+        driver.set_window_size.side_effect = Exception('gone')
+        local._restore_viewport(driver, 1000, 800, {'cdp', 'window'})
+
+    @patch('percy.snapshot._bidi_command', side_effect=Exception('gone'))
+    def test_bidi_reset_failure_is_swallowed(self, _bidi):
+        local._restore_viewport(_driver('firefox'), 1000, 800, {'bidi'})
+
+    @patch('percy.snapshot.RESIZE_SETTLE_SECONDS', 0)
+    @patch('percy.snapshot.get_serialized_dom', MagicMock(return_value={}))
+    @patch('percy.snapshot._wait_for_ready', MagicMock(return_value=None))
+    @patch('percy.snapshot.get_responsive_widths',
+           MagicMock(return_value=[{'width': 375}, {'width': 1280}]))
+    def test_legacy_capture_clears_cdp_on_restore(self):
+        driver = _driver('chrome')
+        driver.get_window_size.return_value = {'width': 1280, 'height': 800}
+        local.capture_responsive_dom(
+            driver, [], {'snapshot': {'exactResponsiveWidth': False}}, percy_dom_script='x')
+        cmds = [c.args[0] for c in driver.execute_cdp_cmd.call_args_list]
+        self.assertEqual(cmds.count('Emulation.setDeviceMetricsOverride'), 2)
+        self.assertEqual(cmds[-1], 'Emulation.clearDeviceMetricsOverride')
+
+
+class TestBidiPlumbing(unittest.TestCase):
+    def test_unavailable_without_websocket_url(self):
+        self.assertFalse(local._bidi_available(_driver('firefox')))
+        self.assertFalse(local._bidi_available(_driver('firefox', webSocketUrl=True)))
+
+    def test_available_with_websocket_url(self):
+        self.assertTrue(local._bidi_available(_driver('firefox', webSocketUrl='ws://x')))
+
+    def test_capabilities_failure_is_unavailable(self):
+        class Broken:  # pylint: disable=too-few-public-methods
+            @property
+            def capabilities(self):
+                raise Exception('boom')
+        self.assertFalse(local._bidi_available(Broken()))
+
+    def test_command_starts_connection_once(self):
+        driver = MagicMock()
+        driver._websocket_connection = None
+
+        def start():
+            driver._websocket_connection = MagicMock()
+            driver._websocket_connection.execute.return_value = {'ok': True}
+        driver._start_bidi.side_effect = start
+        self.assertEqual(local._bidi_command(driver, 'm.x', {'a': 1}), {'ok': True})
+        local._bidi_command(driver, 'm.x', {})
+        driver._start_bidi.assert_called_once_with()
+        command = driver._websocket_connection.execute.call_args_list[0].args[0]
+        self.assertEqual(next(command), {'method': 'm.x', 'params': {'a': 1}})
+
+
+class TestIsLocalDriver(unittest.TestCase):
+    def _with_url(self, url, attr='_url'):
+        driver = MagicMock()
+        driver.service = None
+        if attr == '_url':
+            driver.command_executor = MagicMock(spec=['_url'])
+            driver.command_executor._url = url
+        else:
+            driver.command_executor = MagicMock(spec=['_client_config'])
+            driver.command_executor._client_config.remote_server_addr = url
+        return driver
+
+    def test_localhost_urls_are_local(self):
+        for url in ('http://localhost:4444', 'http://127.0.0.1:9515', 'http://[::1]:4444/wd/hub'):
+            self.assertTrue(local._is_local_driver(self._with_url(url)), url)
+        self.assertTrue(local._is_local_driver(
+            self._with_url('http://localhost:1', attr='client_config')))
+
+    def test_remote_urls_are_not_local(self):
+        self.assertFalse(local._is_local_driver(
+            self._with_url('https://hub-cloud.browserstack.com/wd/hub')))
+        self.assertFalse(local._is_local_driver(MagicMock()))
+
+    def test_service_driver_is_local(self):
+        from selenium.webdriver.common.service import Service  # pylint: disable=import-outside-toplevel
+        driver = MagicMock()
+        driver.service = MagicMock(spec=Service)
+        self.assertTrue(local._is_local_driver(driver))
+
+
+class _Host:  # pylint: disable=too-few-public-methods
+    def __init__(self, root=None, error=None):
+        self._root, self._error = root, error
+
+    @property
+    def shadow_root(self):
+        if self._error:
+            raise self._error
+        return self._root
+
+
+class _Root:  # pylint: disable=too-few-public-methods
+    def __init__(self, ident):
+        self.id = ident
+
+
+class TestClosedShadowStrategies(unittest.TestCase):
+    def test_disable_shadow_dom_skips_everything(self):
+        for options, config in (({'disableShadowDOM': True}, None),
+                                ({'disable_shadow_dom': True}, None),
+                                ({}, {'snapshot': {'disableShadowDOM': True}})):
+            driver = _driver('chrome')
+            local.expose_closed_shadow_roots(driver, options, config)
+            driver.execute_cdp_cmd.assert_not_called()
+            driver.execute_script.assert_not_called()
+
+    def test_per_snapshot_false_overrides_config(self):
+        driver = _driver('chrome')
+        driver.execute_cdp_cmd.return_value = {}
+        local.expose_closed_shadow_roots(
+            driver, {'disableShadowDOM': False}, {'snapshot': {'disableShadowDOM': True}})
+        driver.execute_cdp_cmd.assert_any_call('DOM.enable', {})
+
+    def test_edge_uses_cdp(self):
+        driver = _driver('MicrosoftEdge')
+        driver.execute_cdp_cmd.return_value = {}
+        local.expose_closed_shadow_roots(driver)
+        driver.execute_cdp_cmd.assert_any_call('DOM.enable', {})
+        driver.execute_script.assert_not_called()
+
+    @patch('percy.snapshot._is_local_driver', return_value=True)
+    def test_cdp_failure_falls_back_to_classic(self, _local):
+        driver = _driver('chrome')
+        driver.execute_cdp_cmd.side_effect = Exception('target crashed')
+        driver.execute_script.return_value = []
+        local.expose_closed_shadow_roots(driver)
+        driver.execute_script.assert_called_once_with(local._CLOSED_SHADOW_CANDIDATES_JS)
+
+    @patch('percy.snapshot._is_local_driver', return_value=True)
+    def test_classic_exposes_nested_roots_and_skips_null(self, _local):
+        inner_root = _Root('inner')
+        outer_root = _Root('outer')
+        inner = _Host(inner_root)
+        outer = _Host(outer_root)
+        safari_like = _Host(None)
+        no_root = _Host(error=Exception('no such shadow root'))
+        driver = _driver('firefox')
+
+        def script(js, *args):
+            if js == local._CLOSED_SHADOW_CANDIDATES_JS:
+                return {(): [outer, safari_like, no_root], (outer_root,): [inner],
+                        (inner_root,): []}[args]
+            return None
+        driver.execute_script.side_effect = script
+        self.assertEqual(local._expose_closed_shadow_roots_classic(driver), 2)
+        sets = [c.args[1:] for c in driver.execute_script.call_args_list
+                if c.args[0] == local._SET_CLOSED_SHADOW_JS]
+        self.assertEqual(sets, [(outer, outer_root), (inner, inner_root)])
+
+    @patch('percy.snapshot.CLOSED_SHADOW_MAX_HOSTS', 2)
+    @patch('percy.snapshot.log')
+    def test_classic_stops_at_host_cap(self, mock_log):
+        hosts = [_Host(error=Exception('none')) for _ in range(5)]
+        driver = _driver('firefox')
+        driver.execute_script.return_value = hosts
+        self.assertEqual(local._expose_closed_shadow_roots_classic(driver), 0)
+        self.assertTrue(any('PERCY_CLOSED_SHADOW_MAX_HOSTS' in c.args[0]
+                            for c in mock_log.call_args_list))
+
+    def test_classic_ignores_non_list_result(self):
+        driver = _driver('firefox')
+        driver.execute_script.return_value = None
+        self.assertEqual(local._expose_closed_shadow_roots_classic(driver), 0)
+
+    @patch('percy.snapshot._is_local_driver', return_value=False)
+    @patch('percy.snapshot.log')
+    def test_remote_session_skips_classic_and_logs_once(self, mock_log, _local):
+        driver = _driver('firefox')
+        driver.session_id = 'remote-skip-session'
+        local.expose_closed_shadow_roots(driver)
+        local.expose_closed_shadow_roots(driver)
+        driver.execute_script.assert_not_called()
+        skipped = [c for c in mock_log.call_args_list
+                   if 'skipped on remote session' in c.args[0]]
+        self.assertEqual(len(skipped), 1)
+
+    @patch('percy.snapshot.PERCY_CLOSED_SHADOW_CLASSIC', True)
+    @patch('percy.snapshot._is_local_driver', return_value=False)
+    def test_remote_session_classic_opt_in(self, _local):
+        driver = _driver('firefox')
+        driver.execute_script.return_value = []
+        local.expose_closed_shadow_roots(driver)
+        driver.execute_script.assert_called_once_with(local._CLOSED_SHADOW_CANDIDATES_JS)
+
+    @patch('percy.snapshot._is_local_driver', return_value=True)
+    @patch('percy.snapshot.log')
+    def test_classic_failure_warns_and_continues(self, mock_log, _local):
+        driver = _driver('firefox')
+        driver.execute_script.side_effect = Exception('stale')
+        local.expose_closed_shadow_roots(driver)
+        self.assertTrue(any(c.args[1:] == ('warn',) for c in mock_log.call_args_list))
+
+    @patch('percy.snapshot.CDP_SUPPORT_SELENIUM', False)
+    @patch('selenium.webdriver.remote.webelement.WebElement', new=type('W', (), {}))
+    def test_selenium_3_is_a_noop(self):
+        driver = _driver('chrome')
+        local.expose_closed_shadow_roots(driver)
+        driver.execute_cdp_cmd.assert_not_called()
+        driver.execute_script.assert_not_called()
+
+    @patch('percy.snapshot._bidi_available', return_value=True)
+    @patch('percy.snapshot._bidi_command')
+    def test_bidi_exposes_nested_closed_roots(self, bidi, _available):
+        def closed(host, root):
+            return {'type': 'node', 'sharedId': host, 'value': {
+                'shadowRoot': {'sharedId': root, 'value': {'mode': 'closed'}}}}
+        open_node = {'type': 'node', 'sharedId': 'o', 'value': {
+            'shadowRoot': {'sharedId': 'or', 'value': {'mode': 'open'}}}}
+        plain = {'type': 'node', 'sharedId': 'p', 'value': {}}
+        responses = iter([
+            {'result': {'type': 'array', 'value': [closed('h1', 'r1'), open_node, plain]}},
+            {'result': {'type': 'array', 'value': [closed('h2', 'r2')]}},
+            {'result': {'type': 'array', 'value': []}},
+            {},
+        ])
+        bidi.side_effect = lambda *_a: next(responses)
+        driver = _driver('firefox', webSocketUrl='ws://x')
+        driver.current_window_handle = 'ctx'
+        local.expose_closed_shadow_roots(driver)
+        calls = [c.args[2] for c in bidi.call_args_list]
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(calls[0]['arguments'], [])
+        self.assertEqual(calls[0]['serializationOptions'],
+                         {'maxDomDepth': 0, 'includeShadowTree': 'all'})
+        self.assertEqual(calls[1]['arguments'], [{'sharedId': 'r1'}])
+        self.assertEqual(calls[3]['arguments'], [{'sharedId': i} for i in ('h1', 'r1', 'h2', 'r2')])
+        driver.execute_cdp_cmd.assert_not_called()
+        driver.execute_script.assert_not_called()
+
+    @patch('percy.snapshot._bidi_available', return_value=True)
+    @patch('percy.snapshot._bidi_command',
+           return_value={'result': {'type': 'array', 'value': []}})
+    def test_bidi_without_closed_roots_sets_nothing(self, bidi, _available):
+        driver = _driver('firefox', webSocketUrl='ws://x')
+        local.expose_closed_shadow_roots(driver)
+        bidi.assert_called_once()
+
+    @patch('percy.snapshot._is_local_driver', return_value=True)
+    @patch('percy.snapshot._bidi_available', return_value=True)
+    @patch('percy.snapshot._bidi_command', side_effect=Exception('ws closed'))
+    def test_bidi_failure_falls_back_to_classic(self, _bidi, _available, _local):
+        driver = _driver('firefox', webSocketUrl='ws://x')
+        driver.execute_script.return_value = []
+        local.expose_closed_shadow_roots(driver)
+        driver.execute_script.assert_called_once_with(local._CLOSED_SHADOW_CANDIDATES_JS)
+
+
+class TestParityEdgeCases(unittest.TestCase):
+    def test_invalid_max_hosts_env_falls_back_to_default(self):
+        try:
+            with patch.dict(os.environ, {'PERCY_CLOSED_SHADOW_MAX_HOSTS': 'many'}):
+                importlib.reload(local)
+                self.assertEqual(local.CLOSED_SHADOW_MAX_HOSTS, 200)
+        finally:
+            importlib.reload(local)
+
+    def test_generic_unknown_command_is_not_remembered(self):
+        driver = _driver('chrome')
+        local._remember_cdp_rejection(driver, Exception('unknown command: session/x/print'))
+        self.assertFalse(local._cdp_rejected(driver))
+        local._remember_cdp_rejection(
+            driver, Exception('unknown command: POST /session/x/goog/cdp/execute'))
+        self.assertTrue(local._cdp_rejected(driver))
+
+    def test_malformed_executor_url_is_not_local(self):
+        driver = MagicMock()
+        driver.service = None
+        driver.command_executor = MagicMock(spec=['_url'])
+        driver.command_executor._url = 'http://[::1'
+        self.assertFalse(local._is_local_driver(driver))
+
+    def test_non_dict_snapshot_config_is_ignored(self):
+        self.assertFalse(local._shadow_dom_disabled(None, {'snapshot': 'yes'}))
+
+    def test_inner_width_read_failure_is_none(self):
+        driver = MagicMock()
+        driver.execute_script.side_effect = Exception('gone')
+        self.assertIsNone(local._read_inner_width(driver))

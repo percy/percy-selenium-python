@@ -1019,12 +1019,11 @@ class TestPercyResponsiveCaptureReloadPage(unittest.TestCase):
 
         original_size = self.driver.get_window_size()
         with patch.object(self.driver, 'refresh'), \
-             patch.object(local, 'change_window_dimension_and_wait') as mock_resize:
+             patch.object(local, 'change_window_dimension_and_wait', return_value='window'), \
+             patch.object(local, '_restore_viewport') as mock_restore:
             percy_snapshot(self.driver, 'Reload Restore', responsiveSnapshotCapture=True)
-            # Last resize call must restore the original dimensions
-            last_call = mock_resize.call_args_list[-1]
-            self.assertEqual(last_call[0][1], original_size['width'])
-            self.assertEqual(last_call[0][2], original_size['height'])
+            mock_restore.assert_called_once_with(
+                self.driver, original_size['width'], original_size['height'], {'window'})
 
     @patch.object(local, 'PERCY_RESPONSIVE_CAPTURE_RELOAD_PAGE', False)
     @patch.object(local, 'PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT', None)
@@ -1054,7 +1053,8 @@ class TestPercyResponsiveCaptureReloadPage(unittest.TestCase):
 
         original_size = self.driver.get_window_size()
         with patch.object(self.driver, 'refresh') as mock_refresh, \
-             patch.object(local, 'change_window_dimension_and_wait') as mock_resize:
+             patch.object(local, 'change_window_dimension_and_wait', return_value='window'), \
+             patch.object(local, '_restore_viewport') as mock_restore:
             percy_snapshot(
                 self.driver,
                 'Reload + MinHeight',
@@ -1062,9 +1062,8 @@ class TestPercyResponsiveCaptureReloadPage(unittest.TestCase):
                 minHeight=400
             )
             self.assertEqual(mock_refresh.call_count, 2)
-            last_call = mock_resize.call_args_list[-1]
-            self.assertEqual(last_call[0][1], original_size['width'])
-            self.assertEqual(last_call[0][2], original_size['height'])
+            mock_restore.assert_called_once_with(
+                self.driver, original_size['width'], original_size['height'], {'window'})
 
         s1 = httpretty.last_request().parsed_body
         self.assertEqual(s1['name'], 'Reload + MinHeight')

@@ -44,19 +44,30 @@ except (TypeError, ValueError):
 LABEL = '[\u001b[35m' + ('percy:python' if PERCY_DEBUG else 'percy') + '\u001b[39m]'
 CDP_SUPPORT_SELENIUM = (str(SELENIUM_VERSION)[0].isdigit() and int(
     str(SELENIUM_VERSION)[0]) >= 4) if SELENIUM_VERSION else False
+try:
+    CLOSED_SHADOW_MAX_HOSTS = int(os.environ.get('PERCY_CLOSED_SHADOW_MAX_HOSTS') or 200)
+except (TypeError, ValueError):
+    CLOSED_SHADOW_MAX_HOSTS = 200
+PERCY_CLOSED_SHADOW_CLASSIC = _get_bool_env('PERCY_CLOSED_SHADOW_CLASSIC')
+CHROMIUM_BROWSER_NAMES = (
+    'chrome', 'chromium', 'msedge', 'microsoftedge', 'chrome-headless-shell')
+LOCAL_HOSTS = ('localhost', '127.0.0.1', '::1')
 # Drivers whose CDP command was rejected. Selenium 4.28+ puts execute_cdp_cmd on
-# every Remote driver, but only a ChromiumRemoteConnection (chosen when the
-# requested browserName is exactly "chrome") knows `executeCdpCommand`; others
-# raise "Unrecognised command" on every call. That never recovers mid-session,
-# so stop sending CDP to the driver instead of failing on each resize/snapshot.
+# every Remote driver, but only a ChromiumRemoteConnection knows
+# `executeCdpCommand`; others reject it on every call. That never recovers
+# mid-session, so stop sending CDP to the driver instead of failing on each
+# resize/snapshot.
 _CDP_REJECTED_DRIVERS = WeakSet()
-_CDP_REJECTION_MARKERS = ('unrecognised command', 'unknown command', 'unknown method')
+_ONCE_PER_SESSION = set()
 
-def _is_chrome(driver):
+def _browser_name(driver):
     try:
-        return str((driver.capabilities or {}).get('browserName', '')).lower() == 'chrome'
+        return str((driver.capabilities or {}).get('browserName', '')).lower()
     except Exception:  # pylint: disable=broad-except
-        return False
+        return ''
+
+def _is_chromium(driver):
+    return _browser_name(driver) in CHROMIUM_BROWSER_NAMES
 
 def _cdp_rejected(driver):
     try:
@@ -65,13 +76,92 @@ def _cdp_rejected(driver):
         return False
 
 def _remember_cdp_rejection(driver, error):
+    # Only a driver-level rejection of the CDP endpoint itself is permanent; a
+    # CDP *method* error (e.g. a domain the browser lacks) must not disable CDP.
     message = str(error).lower()
-    if not any(marker in message for marker in _CDP_REJECTION_MARKERS):
+    if not ('unrecognised command' in message or 'unknown command' in message):
+        return
+    if 'executecdpcommand' not in message and '/cdp/execute' not in message:
         return
     try:
         _CDP_REJECTED_DRIVERS.add(driver)
     except TypeError:
         pass
+
+def _cdp_command_registered(driver):
+    # Structural twin of the message check above: Selenium's "Unrecognised
+    # command" is an `assert`, which `python -O` strips (the call then fails
+    # with an unmarked TypeError), so look the command up directly.
+    executor = getattr(driver, 'command_executor', None)
+    commands = getattr(executor, '_commands', None)
+    if not isinstance(commands, dict):
+        return True
+    extra = getattr(executor, 'extra_commands', None)
+    return 'executeCdpCommand' in commands or (
+        isinstance(extra, dict) and 'executeCdpCommand' in extra)
+
+def _can_use_cdp(driver):
+    # Never send CDP to Firefox: on some Selenium builds geckodriver hangs on
+    # execute_cdp_cmd instead of failing fast.
+    return (CDP_SUPPORT_SELENIUM and _is_chromium(driver)
+            and hasattr(driver, 'execute_cdp_cmd')
+            and not _cdp_rejected(driver) and _cdp_command_registered(driver))
+
+def _bidi_available(driver):
+    """True only when the user's session already negotiated BiDi (we never
+    request `webSocketUrl` ourselves) and this Selenium has the raw BiDi
+    plumbing with browsingContext.setViewport (Python bindings 4.32+)."""
+    try:
+        if not isinstance((driver.capabilities or {}).get('webSocketUrl'), str):
+            return False
+        # pylint: disable=import-outside-toplevel
+        from selenium.webdriver.common.bidi.browsing_context import BrowsingContext
+        from selenium.webdriver.common.bidi.common import command_builder  # pylint: disable=unused-import
+        return hasattr(BrowsingContext, 'set_viewport') and hasattr(driver, '_start_bidi')
+    except Exception:  # pylint: disable=broad-except
+        return False
+
+def _bidi_command(driver, method, params):
+    # Raw command instead of the typed helpers: their signatures changed between
+    # 4.32 and 4.50 (e.g. 4.32's set_viewport cannot send `viewport: null`).
+    # pylint: disable=import-outside-toplevel,protected-access
+    from selenium.webdriver.common.bidi.common import command_builder
+    if not getattr(driver, '_websocket_connection', None):
+        driver._start_bidi()
+    return driver._websocket_connection.execute(command_builder(method, params))
+
+def _session_key(driver):
+    try:
+        return str(driver.session_id)
+    except Exception:  # pylint: disable=broad-except
+        return str(id(driver))
+
+def _once_per_session(driver, kind):
+    key = (kind, _session_key(driver))
+    if key in _ONCE_PER_SESSION:
+        return False
+    _ONCE_PER_SESSION.add(key)
+    return True
+
+def _is_local_driver(driver):
+    # pylint: disable=import-outside-toplevel
+    from selenium.webdriver.common.service import Service
+    if isinstance(getattr(driver, 'service', None), Service):
+        return True
+    executor = getattr(driver, 'command_executor', None)
+    url = None
+    for holder, attr in ((executor, '_url'),
+                         (getattr(executor, '_client_config', None), 'remote_server_addr')):
+        value = getattr(holder, attr, None)
+        if isinstance(value, str):
+            url = value
+            break
+    if not url:
+        return False
+    try:
+        return urlparse(url).hostname in LOCAL_HOSTS
+    except Exception:  # pylint: disable=broad-except
+        return False
 
 def log(message, lvl = 'info'):
     message = f'{LABEL} {message}'
@@ -495,34 +585,164 @@ def _capture_cors_iframes(driver, page_url, ctx):
         return []
 
 
-def expose_closed_shadow_roots(driver):
+_SHADOW_DISABLED_KEYS = ('disableShadowDOM', 'disable_shadow_dom')
+
+def _shadow_dom_disabled(options, percy_config=None):
+    for source in (options or {}, ((percy_config or {}).get('snapshot') or {})):
+        if not isinstance(source, dict):
+            continue
+        for key in _SHADOW_DISABLED_KEYS:
+            if key in source:
+                return bool(source[key])
+    return False
+
+def expose_closed_shadow_roots(driver, options=None, percy_config=None):
+    """Stash each closed {host -> shadowRoot} pair in the
+    ``window.__percyClosedShadowRoots`` WeakMap that PercyDOM.serialize reads,
+    using the first available strategy: CDP (Chromium), WebDriver BiDi (only
+    when the session already has ``webSocketUrl``), then classic Get Element
+    Shadow Root (local drivers only, capped). Never raises."""
+    if _shadow_dom_disabled(options, percy_config):
+        return
+    if _can_use_cdp(driver) and _expose_closed_shadow_roots_cdp(driver):
+        return
+    if _bidi_available(driver):
+        try:
+            _expose_closed_shadow_roots_bidi(driver)
+            return
+        except Exception as e:  # pylint: disable=broad-except
+            log(f"Could not expose closed shadow roots via BiDi: {e}", "warn")
+    _maybe_expose_closed_shadow_roots_classic(driver)
+
+_CLOSED_SHADOW_CANDIDATES_JS = (
+    "var root = arguments[0] || document, out = [];"
+    "var all = root.querySelectorAll('*');"
+    "for (var i = 0; i < all.length; i++) {"
+    "  var el = all[i];"
+    "  if (el.localName.indexOf('-') > 0 && !el.shadowRoot) out.push(el);"
+    "}"
+    "return out;"
+)
+_SET_CLOSED_SHADOW_JS = (
+    "(window.__percyClosedShadowRoots = window.__percyClosedShadowRoots || new WeakMap())"
+    ".set(arguments[0], arguments[1]);"
+)
+
+def _maybe_expose_closed_shadow_roots_classic(driver):
+    # pylint: disable=import-outside-toplevel
+    from selenium.webdriver.remote.webelement import WebElement
+    if not hasattr(WebElement, 'shadow_root'):  # Selenium 3
+        return
+    # ~0.6s per WebDriver round trip on a cloud grid makes the per-host walk
+    # cost minutes, so remote sessions need an explicit opt-in.
+    if not (_is_local_driver(driver) or PERCY_CLOSED_SHADOW_CLASSIC):
+        if _once_per_session(driver, 'closed-shadow-remote'):
+            log("closed shadow roots skipped on remote session; start the session with "
+                "webSocketUrl: true or set PERCY_CLOSED_SHADOW_CLASSIC=true")
+        return
+    try:
+        _expose_closed_shadow_roots_classic(driver)
+    except Exception as e:  # pylint: disable=broad-except
+        log(f"Could not expose closed shadow roots via WebDriver: {e}", "warn")
+
+def _expose_closed_shadow_roots_classic(driver):
+    # Closed roots are invisible to page JS, but WebDriver's Get Element Shadow
+    # Root returns them (Chrome, Edge, Firefox). Safari returns null: skip.
+    checked = 0
+    exposed = 0
+    scopes = [None]
+    while scopes:
+        scope = scopes.pop()
+        hosts = (driver.execute_script(_CLOSED_SHADOW_CANDIDATES_JS, scope)
+                 if scope is not None else driver.execute_script(_CLOSED_SHADOW_CANDIDATES_JS))
+        if not isinstance(hosts, list):
+            break
+        for host in hosts:
+            if checked >= CLOSED_SHADOW_MAX_HOSTS:
+                log(f"Closed shadow DOM: stopped after {checked} candidate hosts "
+                    "(PERCY_CLOSED_SHADOW_MAX_HOSTS)", "debug")
+                return exposed
+            checked += 1
+            try:
+                root = host.shadow_root
+            except Exception:  # pylint: disable=broad-except
+                continue
+            if root is None or getattr(root, 'id', None) is None:
+                continue
+            driver.execute_script(_SET_CLOSED_SHADOW_JS, host, root)
+            exposed += 1
+            scopes.append(root)
+    if exposed:
+        log(f"Exposed {exposed} closed shadow root(s) via WebDriver", "debug")
+    return exposed
+
+_BIDI_CANDIDATES_FN = (
+    "function () {"
+    "  var roots = arguments.length ? Array.prototype.slice.call(arguments) : [document];"
+    "  var out = [];"
+    "  roots.forEach(function (root) {"
+    "    var all = root.querySelectorAll('*');"
+    "    for (var i = 0; i < all.length; i++) {"
+    "      if (all[i].localName.indexOf('-') > 0 && !all[i].shadowRoot) out.push(all[i]);"
+    "    }"
+    "  });"
+    "  return out;"
+    "}"
+)
+_BIDI_SET_FN = (
+    "function () {"
+    "  var m = window.__percyClosedShadowRoots = window.__percyClosedShadowRoots || new WeakMap();"
+    "  for (var i = 0; i + 1 < arguments.length; i += 2) m.set(arguments[i], arguments[i + 1]);"
+    "}"
+)
+
+def _expose_closed_shadow_roots_bidi(driver):
+    # includeShadowTree:'all' makes BiDi serialize closed roots as shared
+    # references; one call per nesting level, then one call to fill the WeakMap.
+    target = {'context': driver.current_window_handle}
+    pairs = []
+    scopes = []
+    for _ in range(32):  # nesting depth bound
+        result = _bidi_command(driver, 'script.callFunction', {
+            'functionDeclaration': _BIDI_CANDIDATES_FN,
+            'awaitPromise': False,
+            'target': target,
+            'arguments': [{'sharedId': s} for s in scopes],
+            'serializationOptions': {'maxDomDepth': 0, 'includeShadowTree': 'all'},
+            'resultOwnership': 'none',
+        })
+        nodes = ((result or {}).get('result') or {}).get('value') or []
+        scopes = []
+        for node in nodes:
+            shadow = ((node or {}).get('value') or {}).get('shadowRoot') or {}
+            if (shadow.get('value') or {}).get('mode') != 'closed':
+                continue
+            if node.get('sharedId') and shadow.get('sharedId'):
+                pairs.append((node['sharedId'], shadow['sharedId']))
+                scopes.append(shadow['sharedId'])
+        if not scopes or len(pairs) >= CLOSED_SHADOW_MAX_HOSTS:
+            break
+    if not pairs:
+        return
+    _bidi_command(driver, 'script.callFunction', {
+        'functionDeclaration': _BIDI_SET_FN,
+        'awaitPromise': False,
+        'target': target,
+        'arguments': [{'sharedId': i} for pair in pairs for i in pair],
+        'resultOwnership': 'none',
+    })
+    log(f"Exposed {len(pairs)} closed shadow root(s) via BiDi", "debug")
+
+def _expose_closed_shadow_roots_cdp(driver):
     # pylint: disable=too-many-nested-blocks
-    """Use CDP to find every closed shadow root in the page and stash each
-    {host -> shadowRoot} pair in a WeakMap on ``window``. PercyDOM.serialize
-    reads from that map to capture closed-mode shadow DOM that would otherwise
-    be invisible to ordinary DOM traversal. Non-Chromium drivers will fail the
-    initial CDP call and we silently no-op.
-    """
-    if not hasattr(driver, 'execute_cdp_cmd'):
-        return
-    # CDP is Chromium-only. Some Selenium builds expose execute_cdp_cmd on the
-    # Firefox driver as well, but the CDP call then HANGS geckodriver
-    # indefinitely (no timeout) instead of failing fast — wedging CI for hours.
-    # Restrict to Chromium, mirroring the responsive-resize guard below
-    # (browserName == 'chrome'). Closed shadow DOM via CDP is Chromium-only by
-    # design, so non-Chromium drivers correctly no-op here.
-    if not _is_chrome(driver):
-        log("Skipping closed shadow DOM capture: CDP requires a Chromium browser",
-            "debug")
-        return
-    if _cdp_rejected(driver):
-        return
+    """Returns False when CDP is unusable so the caller can try the next
+    strategy; True once CDP ran (any later per-node failure is logged)."""
     try:
         driver.execute_cdp_cmd("DOM.enable", {})
     except Exception as e:  # pylint: disable=broad-except
         _remember_cdp_rejection(driver, e)
         log(f"CDP unavailable for closed shadow DOM capture: {e}", "debug")
-        return
+        return False
     try:
         doc = driver.execute_cdp_cmd(
             "DOM.getDocument", {"depth": -1, "pierce": True}
@@ -556,7 +776,7 @@ def expose_closed_shadow_roots(driver):
                     stack.append(child)
 
         if not closed_pairs:
-            return
+            return True
 
         log(f"Found {len(closed_pairs)} closed shadow root(s), exposing via CDP",
             "debug")
@@ -595,6 +815,7 @@ def expose_closed_shadow_roots(driver):
             driver.execute_cdp_cmd("DOM.disable", {})
         except Exception:  # pylint: disable=broad-except
             pass
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -843,6 +1064,8 @@ def get_serialized_dom(driver, cookies, percy_config=None, percy_dom_script=None
     #    per width.
     if not skip_readiness:
         readiness_diagnostics = _wait_for_ready(driver, percy_config, kwargs)
+        # After readiness, so roots attached while waiting are still exposed.
+        expose_closed_shadow_roots(driver, kwargs, percy_config)
     # PER-8053: deep-merge the global .percy.yml snapshot config into the
     # per-call serialize options (per-call wins) BEFORE serialize, so config-only
     # keys reach PercyDOM.serialize. Readiness ran above on the raw per-call
@@ -914,49 +1137,132 @@ def _setup_resize_listener(driver):
         window.addEventListener('resize', window._percyResizeHandler);
     """)
 
-def change_window_dimension_and_wait(driver, width, height, resizeCount, wait_for_resize=True):
-    # resizeCount is retained for call-site/signature stability and the in-page
-    # resize listener; its value is no longer polled (see the settle note below).
-    # pylint: disable=unused-argument
+_INNER_WIDTH_JS = 'return window.innerWidth;'
+
+def _exact_responsive_width(config, kwargs):
+    for key in ('exactResponsiveWidth', 'exact_responsive_width'):
+        if kwargs.get(key) is not None:
+            return bool(kwargs[key])
+    snapshot_config = (config or {}).get('snapshot') if isinstance(config, dict) else None
+    configured = (snapshot_config.get('exactResponsiveWidth')
+                  if isinstance(snapshot_config, dict) else None)
+    if configured is not None:
+        return bool(configured)
+    return True
+
+def _resize_window(driver, width, height):
     try:
-        # Exact, case-sensitive match as in earlier releases, so drivers that report
-        # e.g. "Chrome" keep the plain window resize instead of switching to CDP.
-        if CDP_SUPPORT_SELENIUM and (driver.capabilities or {}).get('browserName') == 'chrome' \
-                and not _cdp_rejected(driver):
-            print(f'Attempting to resize using CDP for width {width} and height {height}')
-            try:
-                driver.execute_cdp_cmd('Emulation.setDeviceMetricsOverride', {
-                    'height': height, 'width': width, 'deviceScaleFactor': 1, 'mobile': False })
-            except Exception as e:
-                _remember_cdp_rejection(driver, e)
-                raise
-        else:
-            #driver.execute_script(f"window.resizeTo({width}, {height});")
-            driver.set_window_size(width, height)
-    except Exception as e:
-        log(f'Resizing using cdp failed falling back driver for width {width} {e}', 'debug')
-        print(
-            f'Error during CDP resize: {e}, '
-            f'falling back to driver resize for width {width} and height {height}'
-        )
-        #driver.execute_script(f"window.resizeTo({width}, {height});")
         driver.set_window_size(width, height)
-    # The final window-restore after the responsive loop passes
-    # wait_for_resize=False: no snapshot is taken after it, so polling for the
-    # resize event is pointless — and that poll (a tight WebDriverWait whose
-    # 1s timeout bounds the polling but NOT a single hung execute_script) is
-    # exactly what wedges geckodriver indefinitely in CI, hanging the whole job.
-    if not wait_for_resize:
+    except Exception as e:  # pylint: disable=broad-except
+        log(f'Window resize failed, retrying for width {width}: {e}', 'debug')
+        driver.set_window_size(width, height)
+
+def _read_inner_width(driver):
+    try:
+        value = driver.execute_script(_INNER_WIDTH_JS)
+        return int(value) if isinstance(value, (int, float)) else None
+    except Exception:  # pylint: disable=broad-except
+        return None
+
+def _set_cdp_viewport(driver, width, height):
+    print(f'Attempting to resize using CDP for width {width} and height {height}')
+    try:
+        driver.execute_cdp_cmd('Emulation.setDeviceMetricsOverride', {
+            'height': height, 'width': width, 'deviceScaleFactor': 1, 'mobile': False })
+        return True
+    except Exception as e:  # pylint: disable=broad-except
+        _remember_cdp_rejection(driver, e)
+        log(f'Resizing using cdp failed falling back driver for width {width} {e}', 'debug')
+        return False
+
+def _set_viewport(driver, width, height, exact):
+    """Apply the width with the first mechanism that works and return its name
+    ('cdp', 'bidi' or 'window')."""
+    if not exact:
+        # Pre-exactResponsiveWidth behaviour: CDP only for an exact 'chrome'.
+        legacy_cdp = (CDP_SUPPORT_SELENIUM and not _cdp_rejected(driver)
+                      and (driver.capabilities or {}).get('browserName') == 'chrome'
+                      and _cdp_command_registered(driver))
+        if legacy_cdp and _set_cdp_viewport(driver, width, height):
+            return 'cdp'
+        _resize_window(driver, width, height)
+        return 'window'
+    # Emulation is the only way below the OS minimum window width (~500px) and
+    # past Edge's window border; a window resize can never get there.
+    if _can_use_cdp(driver) and _set_cdp_viewport(driver, width, height):
+        return 'cdp'
+    if _bidi_available(driver):
+        try:
+            _bidi_command(driver, 'browsingContext.setViewport', {
+                'context': driver.current_window_handle,
+                'viewport': {'width': width, 'height': height},
+                'devicePixelRatio': 1,
+            })
+            return 'bidi'
+        except Exception as e:  # pylint: disable=broad-except
+            log(f'Resizing using BiDi failed, falling back to window for width {width}: {e}',
+                'debug')
+    _resize_window(driver, width, height)
+    return 'window'
+
+def _verify_viewport_width(driver, width, height, mechanism):
+    inner_width = _read_inner_width(driver)
+    if inner_width is None or inner_width == width:
         return
-    # Let the viewport reflow before the snapshot. This previously polled
-    # `window.resizeCount` via execute_script inside a 1s WebDriverWait, but that
-    # timeout only bounds the poll *loop* — not a single execute_script that
-    # geckodriver has wedged on, which hung CI jobs until the runner budget ran
-    # out. A short fixed settle delay issues no driver command between the resize
-    # and the snapshot, so it cannot wedge; we trade event-precise timing for a
-    # hang-proof path.
+    if mechanism == 'window':
+        # The window frame (e.g. Edge's border) eats part of the outer width:
+        # correct once by the observed difference.
+        _resize_window(driver, width + (width - inner_width), height)
+        sleep(RESIZE_SETTLE_SECONDS)
+        corrected = _read_inner_width(driver)
+        if corrected is None or corrected == width:
+            return
+        inner_width = corrected
+    log(f'Responsive capture: requested width {width} but viewport is {inner_width} '
+        f'({mechanism})', 'debug')
+    if mechanism == 'window' and _once_per_session(driver, 'viewport-width-mismatch'):
+        browser = _browser_name(driver) or 'this browser'
+        log(f'Could not set an exact {width}px viewport on {browser}'
+            f' (got {inner_width}px); start the session with webSocketUrl: true for exact '
+            'responsive widths', 'warn')
+
+def change_window_dimension_and_wait(driver, width, height, resizeCount,
+                                     wait_for_resize=True, exact=True):
+    # resizeCount is retained for call-site/signature stability and the in-page
+    # resize listener; its value is no longer polled.
+    # pylint: disable=unused-argument
+    mechanism = _set_viewport(driver, width, height, exact)
+    if not wait_for_resize:
+        return mechanism
+    # A fixed settle delay rather than polling `window.resizeCount` inside a
+    # WebDriverWait: that wait bounds the poll loop but not a single
+    # execute_script that geckodriver has wedged on, which hung CI jobs.
     print(f'Resized to {width}x{height}, letting layout settle...')
     sleep(RESIZE_SETTLE_SECONDS)
+    if exact:
+        _verify_viewport_width(driver, width, height, mechanism)
+    return mechanism
+
+def _restore_viewport(driver, width, height, mechanisms):
+    """Undo responsive resizing. Emulation is cleared rather than re-applied at
+    the original size, which would leave the page emulated after capture."""
+    if 'cdp' in mechanisms:
+        try:
+            driver.execute_cdp_cmd('Emulation.clearDeviceMetricsOverride', {})
+        except Exception as e:  # pylint: disable=broad-except
+            log(f'Could not clear CDP viewport override: {e}', 'debug')
+    if 'bidi' in mechanisms:
+        try:
+            _bidi_command(driver, 'browsingContext.setViewport', {
+                'context': driver.current_window_handle,
+                'viewport': None, 'devicePixelRatio': None})
+        except Exception as e:  # pylint: disable=broad-except
+            log(f'Could not reset BiDi viewport: {e}', 'debug')
+    if 'window' in mechanisms:
+        try:
+            _resize_window(driver, width, height)
+        except Exception as e:  # pylint: disable=broad-except
+            log(f'Could not restore window size: {e}', 'debug')
 
 def _responsive_sleep():
     if not RESPONSIVE_CAPTURE_SLEEP_TIME:
@@ -975,7 +1281,6 @@ def capture_responsive_dom(driver, cookies, config, percy_dom_script=None, **kwa
     window_size = driver.get_window_size()
     current_width, current_height = window_size['width'], window_size['height']
     log(f'Before window size: {current_width}x{current_height}', 'debug')
-    last_window_width = current_width
     resize_count = 0
     # Initialize resize listener once before the loop
     driver.execute_script("PercyDOM.waitForResize()")
@@ -985,7 +1290,13 @@ def capture_responsive_dom(driver, cookies, config, percy_dom_script=None, **kwa
     # Per-width DOM mutations after viewport changes are handled by the
     # `waitForResize` instrumentation above, not by re-running readiness.
     responsive_readiness_diagnostics = _wait_for_ready(driver, config, kwargs)
+    expose_closed_shadow_roots(driver, kwargs, config)
     target_height = current_height
+    exact = _exact_responsive_width(config, kwargs)
+    mechanisms = set()
+    # The outer window width says nothing about the viewport (Edge's border), so
+    # exact mode applies even a width equal to the current window width.
+    last_window_width = None if exact else current_width
 
     if PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT:
         target_height = kwargs.get('minHeight') or config.get('snapshot', {}).get('minHeight')
@@ -1004,7 +1315,8 @@ def capture_responsive_dom(driver, cookies, config, percy_dom_script=None, **kwa
         print(f'Capturing responsive snapshot for width: {width} and height: {height}')
         if last_window_width != width:
             resize_count += 1
-            change_window_dimension_and_wait(driver, width, height, resize_count)
+            mechanisms.add(change_window_dimension_and_wait(
+                driver, width, height, resize_count, exact=exact))
             last_window_width = width
 
         if PERCY_RESPONSIVE_CAPTURE_RELOAD_PAGE:
@@ -1013,7 +1325,7 @@ def capture_responsive_dom(driver, cookies, config, percy_dom_script=None, **kwa
             driver.execute_script(percy_dom_script)
             # Re-prime closed shadow roots after the page reload — the WeakMap
             # on window was destroyed when navigation happened.
-            expose_closed_shadow_roots(driver)
+            expose_closed_shadow_roots(driver, kwargs, config)
             _setup_resize_listener(driver)
             driver.execute_script("PercyDOM.waitForResize();")
             resize_count = 0 # Reset count because the listener just started fresh
@@ -1035,11 +1347,7 @@ def capture_responsive_dom(driver, cookies, config, percy_dom_script=None, **kwa
                 json.dump(dom_snapshots, file_handle, indent=4)
         except Exception as e:  # pylint: disable=broad-except
             log(f"Could not write debug snapshot dump: {type(e).__name__}: {e}", "debug")
-    # Restore the original window size after capture. No snapshot follows, so
-    # skip the resize-event poll (wait_for_resize=False) — it serves no purpose
-    # here and is the call that hangs geckodriver in CI.
-    change_window_dimension_and_wait(
-        driver, current_width, current_height, resize_count + 1, wait_for_resize=False)
+    _restore_viewport(driver, current_width, current_height, mechanisms)
     return dom_snapshots
 
 def is_responsive_snapshot_capture(config, **kwargs):
@@ -1064,9 +1372,6 @@ def percy_snapshot(driver, name, **kwargs):
         # Inject the DOM serialization script
         percy_dom_script = fetch_percy_dom()
         driver.execute_script(percy_dom_script)
-        # Expose closed shadow roots via CDP before serialization so PercyDOM
-        # can find them through the WeakMap (Chromium-only; non-Chromium no-ops).
-        expose_closed_shadow_roots(driver)
         cookies = driver.get_cookies()
 
         # Serialize and capture the DOM
