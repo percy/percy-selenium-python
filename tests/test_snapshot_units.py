@@ -1,10 +1,11 @@
-# pylint: disable=protected-access
+# pylint: disable=protected-access,too-many-lines
 """Focused unit tests for snapshot.py helper functions and their error/
 fallback paths. These run as plain unittests (no Percy CLI needed) and
 target branches the end-to-end suite in test_snapshot.py does not reach."""
 import importlib
 import json
 import os
+import sys
 import unittest
 from unittest.mock import patch, MagicMock, Mock
 
@@ -771,13 +772,38 @@ class TestRestoreViewport(unittest.TestCase):
         self.assertEqual(cmds[-1], 'Emulation.clearDeviceMetricsOverride')
 
 
+def _fake_bidi_modules():
+    """Stand-ins for the BiDi binding modules (absent before Selenium 4.32), so
+    these tests behave the same on every Selenium the CI matrix installs."""
+    def command_builder(method, params=None):
+        result = yield {'method': method, 'params': params or {}}
+        return result
+
+    class BrowsingContext:  # pylint: disable=too-few-public-methods
+        def set_viewport(self):
+            pass
+
+    common = MagicMock(command_builder=command_builder)
+    browsing_context = MagicMock(BrowsingContext=BrowsingContext)
+    return patch.dict(sys.modules, {
+        'selenium.webdriver.common.bidi.common': common,
+        'selenium.webdriver.common.bidi.browsing_context': browsing_context,
+    })
+
+
 class TestBidiPlumbing(unittest.TestCase):
     def test_unavailable_without_websocket_url(self):
-        self.assertFalse(local._bidi_available(_driver('firefox')))
-        self.assertFalse(local._bidi_available(_driver('firefox', webSocketUrl=True)))
+        with _fake_bidi_modules():
+            self.assertFalse(local._bidi_available(_driver('firefox')))
+            self.assertFalse(local._bidi_available(_driver('firefox', webSocketUrl=True)))
 
     def test_available_with_websocket_url(self):
-        self.assertTrue(local._bidi_available(_driver('firefox', webSocketUrl='ws://x')))
+        with _fake_bidi_modules():
+            self.assertTrue(local._bidi_available(_driver('firefox', webSocketUrl='ws://x')))
+
+    def test_unavailable_when_bindings_are_missing(self):
+        with patch.dict(sys.modules, {'selenium.webdriver.common.bidi.browsing_context': None}):
+            self.assertFalse(local._bidi_available(_driver('firefox', webSocketUrl='ws://x')))
 
     def test_capabilities_failure_is_unavailable(self):
         class Broken:  # pylint: disable=too-few-public-methods
@@ -794,8 +820,9 @@ class TestBidiPlumbing(unittest.TestCase):
             driver._websocket_connection = MagicMock()
             driver._websocket_connection.execute.return_value = {'ok': True}
         driver._start_bidi.side_effect = start
-        self.assertEqual(local._bidi_command(driver, 'm.x', {'a': 1}), {'ok': True})
-        local._bidi_command(driver, 'm.x', {})
+        with _fake_bidi_modules():
+            self.assertEqual(local._bidi_command(driver, 'm.x', {'a': 1}), {'ok': True})
+            local._bidi_command(driver, 'm.x', {})
         driver._start_bidi.assert_called_once_with()
         command = driver._websocket_connection.execute.call_args_list[0].args[0]
         self.assertEqual(next(command), {'method': 'm.x', 'params': {'a': 1}})
