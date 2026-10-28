@@ -113,6 +113,14 @@ def mock_logger():
         status=200
     )
 
+def enable_httpretty(**kwargs):
+    # Always answer /percy/log: an unmocked request is passed through to the
+    # live `percy exec` server by httpretty, whose passthrough reads until the
+    # server closes the keep-alive connection and ignores the request timeout,
+    # so a single SDK debug log() hangs the test run forever.
+    httpretty.enable(**kwargs)
+    mock_logger()
+
 def mock_screenshot(fail=False, data=False):
 
     httpretty.register_uri(
@@ -142,7 +150,7 @@ class TestPercySnapshot(unittest.TestCase):
         local.fetch_percy_dom.cache_clear()
         self.driver.get('http://localhost:8000')
         self.driver.delete_all_cookies()
-        httpretty.enable()
+        enable_httpretty()
 
     def tearDown(self):
         httpretty.disable()
@@ -656,7 +664,7 @@ class TestPercyScreenshot(unittest.TestCase):
         # clear the cached value for testing
         local.is_percy_enabled.cache_clear()
         self.driver.get('http://localhost:8000')
-        httpretty.enable()
+        enable_httpretty()
 
     def tearDown(self):
         httpretty.disable()
@@ -877,7 +885,7 @@ class TestPercyResponsiveCaptureMinHeight(unittest.TestCase):
         local.fetch_percy_dom.cache_clear()
         self.driver.get('http://localhost:8000')
         self.driver.delete_all_cookies()
-        httpretty.enable()
+        enable_httpretty()
 
     def tearDown(self):
         httpretty.disable()
@@ -980,7 +988,7 @@ class TestPercyResponsiveCaptureReloadPage(unittest.TestCase):
         self.driver.delete_all_cookies()
         # allow_net_connect=True lets geckodriver WebSocket traffic through
         # while still intercepting localhost:5338 (Percy CLI) calls
-        httpretty.enable(allow_net_connect=True)
+        enable_httpretty(allow_net_connect=True)
 
     def tearDown(self):
         httpretty.disable()

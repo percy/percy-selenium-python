@@ -1,8 +1,6 @@
 # CI/dev test env only — setup.py keeps `selenium>=3` for end users. On PyPI,
-# Selenium 4.28-4.36 require Python >= 3.9 and 4.37+ require >= 3.10. With any
-# release from 4.28 on, tests.test_snapshot hangs in the Linux CI jobs (seen
-# with 4.36.0 on 3.9 and 4.51.0 on 3.10, both until the 6h job limit) although
-# it passes on macOS with 4.50, so the test env stays on 4.27.x until that is
-# root-caused. The SDK feature-detects newer bindings (BiDi needs 4.32+).
-selenium>=4,<4.28
+# Selenium 4.28-4.36 require Python >= 3.9 and 4.37+ require >= 3.10, so pip
+# resolves 4.27.x on 3.8, 4.36.x on 3.9 and the current release on 3.10+. The
+# SDK feature-detects newer bindings (BiDi needs 4.32+).
+selenium>=4
 requests==2.*
