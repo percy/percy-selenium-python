@@ -113,6 +113,14 @@ def mock_logger():
         status=200
     )
 
+def enable_httpretty(**kwargs):
+    # Always answer /percy/log: an unmocked request is passed through to the
+    # live `percy exec` server by httpretty, whose passthrough reads until the
+    # server closes the keep-alive connection and ignores the request timeout,
+    # so a single SDK debug log() hangs the test run forever.
+    httpretty.enable(**kwargs)
+    mock_logger()
+
 def mock_screenshot(fail=False, data=False):
 
     httpretty.register_uri(
@@ -142,7 +150,7 @@ class TestPercySnapshot(unittest.TestCase):
         local.fetch_percy_dom.cache_clear()
         self.driver.get('http://localhost:8000')
         self.driver.delete_all_cookies()
-        httpretty.enable()
+        enable_httpretty()
 
     def tearDown(self):
         httpretty.disable()
@@ -656,7 +664,7 @@ class TestPercyScreenshot(unittest.TestCase):
         # clear the cached value for testing
         local.is_percy_enabled.cache_clear()
         self.driver.get('http://localhost:8000')
-        httpretty.enable()
+        enable_httpretty()
 
     def tearDown(self):
         httpretty.disable()
@@ -877,7 +885,7 @@ class TestPercyResponsiveCaptureMinHeight(unittest.TestCase):
         local.fetch_percy_dom.cache_clear()
         self.driver.get('http://localhost:8000')
         self.driver.delete_all_cookies()
-        httpretty.enable()
+        enable_httpretty()
 
     def tearDown(self):
         httpretty.disable()
@@ -980,7 +988,7 @@ class TestPercyResponsiveCaptureReloadPage(unittest.TestCase):
         self.driver.delete_all_cookies()
         # allow_net_connect=True lets geckodriver WebSocket traffic through
         # while still intercepting localhost:5338 (Percy CLI) calls
-        httpretty.enable(allow_net_connect=True)
+        enable_httpretty(allow_net_connect=True)
 
     def tearDown(self):
         httpretty.disable()
@@ -1019,12 +1027,11 @@ class TestPercyResponsiveCaptureReloadPage(unittest.TestCase):
 
         original_size = self.driver.get_window_size()
         with patch.object(self.driver, 'refresh'), \
-             patch.object(local, 'change_window_dimension_and_wait') as mock_resize:
+             patch.object(local, 'change_window_dimension_and_wait', return_value='window'), \
+             patch.object(local, '_restore_viewport') as mock_restore:
             percy_snapshot(self.driver, 'Reload Restore', responsiveSnapshotCapture=True)
-            # Last resize call must restore the original dimensions
-            last_call = mock_resize.call_args_list[-1]
-            self.assertEqual(last_call[0][1], original_size['width'])
-            self.assertEqual(last_call[0][2], original_size['height'])
+            mock_restore.assert_called_once_with(
+                self.driver, original_size['width'], original_size['height'], {'window'})
 
     @patch.object(local, 'PERCY_RESPONSIVE_CAPTURE_RELOAD_PAGE', False)
     @patch.object(local, 'PERCY_RESPONSIVE_CAPTURE_MIN_HEIGHT', None)
@@ -1054,7 +1061,8 @@ class TestPercyResponsiveCaptureReloadPage(unittest.TestCase):
 
         original_size = self.driver.get_window_size()
         with patch.object(self.driver, 'refresh') as mock_refresh, \
-             patch.object(local, 'change_window_dimension_and_wait') as mock_resize:
+             patch.object(local, 'change_window_dimension_and_wait', return_value='window'), \
+             patch.object(local, '_restore_viewport') as mock_restore:
             percy_snapshot(
                 self.driver,
                 'Reload + MinHeight',
@@ -1062,9 +1070,8 @@ class TestPercyResponsiveCaptureReloadPage(unittest.TestCase):
                 minHeight=400
             )
             self.assertEqual(mock_refresh.call_count, 2)
-            last_call = mock_resize.call_args_list[-1]
-            self.assertEqual(last_call[0][1], original_size['width'])
-            self.assertEqual(last_call[0][2], original_size['height'])
+            mock_restore.assert_called_once_with(
+                self.driver, original_size['width'], original_size['height'], {'window'})
 
         s1 = httpretty.last_request().parsed_body
         self.assertEqual(s1['name'], 'Reload + MinHeight')
