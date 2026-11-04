@@ -5,6 +5,9 @@ target branches the end-to-end suite in test_snapshot.py does not reach."""
 import importlib
 import json
 import os
+import shutil
+import stat
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock, Mock
 
@@ -471,6 +474,13 @@ class TestGetSerializedDomPageUrlFailure(unittest.TestCase):
 
 
 class TestResponsiveDebugDump(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        patcher = patch('percy.snapshot.tempfile.tempdir', self.tmpdir)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(shutil.rmtree, self.tmpdir, True)
+
     def tearDown(self):
         if os.path.exists('output_file.json'):
             os.remove('output_file.json')
@@ -489,7 +499,32 @@ class TestResponsiveDebugDump(unittest.TestCase):
         result = local.capture_responsive_dom(
             self._driver(), {}, {}, percy_dom_script='PERCY_DOM')
         self.assertEqual(result, [])
-        self.assertTrue(os.path.exists('output_file.json'))
+        self.assertEqual(len(os.listdir(self.tmpdir)), 1)
+
+    @patch('percy.snapshot.PERCY_DEBUG', True)
+    @patch('percy.snapshot.change_window_dimension_and_wait', MagicMock())
+    @patch('percy.snapshot._wait_for_ready', MagicMock(return_value=None))
+    @patch('percy.snapshot.get_responsive_widths',
+           MagicMock(return_value=[{'width': 375}]))
+    @patch('percy.snapshot.get_serialized_dom')
+    def test_debug_dump_is_private_temp_file_without_cookies(self, mock_dom):
+        mock_dom.return_value = {'html': '<p/>', 'cookies': [{'name': 'sid', 'value': 's3cr3t'}]}
+        result = local.capture_responsive_dom(
+            self._driver(), [{'name': 'sid', 'value': 's3cr3t'}], {},
+            percy_dom_script='PERCY_DOM')
+        # The snapshot sent to the CLI still carries its cookies
+        self.assertEqual(result[0]['cookies'], [{'name': 'sid', 'value': 's3cr3t'}])
+        # No predictable file is dropped into the working directory
+        self.assertFalse(os.path.exists('output_file.json'))
+        files = os.listdir(self.tmpdir)
+        self.assertEqual(len(files), 1)
+        path = os.path.join(self.tmpdir, files[0])
+        if os.name == 'posix':
+            self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        with open(path, encoding='utf-8') as file_handle:
+            content = file_handle.read()
+        self.assertNotIn('s3cr3t', content)
+        self.assertEqual(json.loads(content), [{'html': '<p/>', 'width': 375}])
 
     @patch('percy.snapshot.PERCY_DEBUG', True)
     @patch('percy.snapshot.change_window_dimension_and_wait', MagicMock())
@@ -500,6 +535,73 @@ class TestResponsiveDebugDump(unittest.TestCase):
         result = local.capture_responsive_dom(
             self._driver(), {}, {}, percy_dom_script='PERCY_DOM')
         self.assertEqual(result, [])
+
+
+class TestCookieForwarding(unittest.TestCase):
+    SESSION_COOKIES = [
+        {'name': 'session_id', 'value': 'abc', 'domain': 'example.com', 'secure': True},
+        {'name': 'auth_token', 'value': 'xyz', 'domain': 'example.com', 'secure': True},
+    ]
+
+    def setUp(self):
+        patcher = patch('percy.snapshot._cookie_opt_out_warned', False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _driver(self):
+        driver = MagicMock()
+        driver.get_cookies.return_value = list(self.SESSION_COOKIES)
+        driver.current_url = 'https://example.com/'
+        return driver
+
+    @patch('percy.snapshot.is_percy_enabled',
+           MagicMock(return_value={'session_type': 'web', 'config': {}, 'widths': {}}))
+    @patch('percy.snapshot.fetch_percy_dom', MagicMock(return_value='PERCY_DOM'))
+    @patch('percy.snapshot.expose_closed_shadow_roots', MagicMock())
+    @patch('percy.snapshot.get_serialized_dom')
+    @patch('percy.snapshot.requests.post')
+    def _take_snapshots(self, mock_post, mock_dom, count=1):
+        mock_dom.side_effect = lambda _d, cookies, **_k: {'html': '<p/>', 'cookies': cookies}
+        mock_post.return_value.json.return_value = {'success': True}
+        for i in range(count):
+            local.percy_snapshot(self._driver(), f'snap {i}')
+        return [c for c in mock_post.call_args_list if c.args[0].endswith('/percy/snapshot')]
+
+    @patch.dict(os.environ, {}, clear=False)
+    def test_default_forwards_session_cookies_unchanged(self):
+        os.environ.pop('PERCY_DO_NOT_USE_CAPTURED_COOKIES', None)
+        posts = self._take_snapshots()
+        self.assertEqual(posts[0].kwargs['json']['dom_snapshot']['cookies'],
+                         self.SESSION_COOKIES)
+
+    @patch.dict(os.environ, {'PERCY_DO_NOT_USE_CAPTURED_COOKIES': 'true'})
+    @patch('percy.snapshot.log')
+    def test_opt_out_sends_no_cookies_and_warns_once(self, mock_log):
+        posts = self._take_snapshots(count=2)  # pylint: disable=unexpected-keyword-arg
+        self.assertEqual(len(posts), 2)
+        for post in posts:
+            self.assertEqual(post.kwargs['json']['dom_snapshot']['cookies'], [])
+        warnings = [c for c in mock_log.call_args_list
+                    if len(c.args) > 1 and c.args[1] == 'warn']
+        self.assertEqual(len(warnings), 1)
+        self.assertEqual(
+            warnings[0].args[0],
+            'Not sending browser cookies to Percy because PERCY_DO_NOT_USE_CAPTURED_COOKIES '
+            'is set. Pages or assets that need a logged-in session may fail to load during '
+            'asset discovery, so snapshots can render incorrectly.')
+
+    @patch.dict(os.environ, {'PERCY_DO_NOT_USE_CAPTURED_COOKIES': 'false'})
+    def test_opt_out_false_still_forwards(self):
+        driver = self._driver()
+        self.assertEqual(local.get_cookies_for_snapshot(driver), self.SESSION_COOKIES)
+
+    @patch.dict(os.environ, {}, clear=False)
+    @patch('percy.snapshot.log')
+    def test_cookie_read_failure_is_not_raised(self, _mock_log):
+        os.environ.pop('PERCY_DO_NOT_USE_CAPTURED_COOKIES', None)
+        driver = self._driver()
+        driver.get_cookies.side_effect = Exception('no cookies for you')
+        self.assertEqual(local.get_cookies_for_snapshot(driver), [])
 
 
 if __name__ == '__main__':

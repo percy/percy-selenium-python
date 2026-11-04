@@ -1,4 +1,5 @@
 # . # pylint: disable=[arguments-differ, protected-access]
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -57,3 +58,31 @@ class TestCache(unittest.TestCase):
         self.assertIn(self.session_id, self.cache.CACHE)
         self.cache.cleanup_cache()
         self.assertNotIn(self.session_id, self.cache.CACHE)
+
+    def test_cleanup_cache_blocks_concurrent_writers_while_iterating(self):
+        cache = self.cache
+        writer_blocked = []
+        writers = []
+
+        class InterleavingDict(dict):
+            # Simulates another thread writing to the cache mid-iteration
+            def items(self):
+                writer = threading.Thread(
+                    target=cache.set_cache,
+                    args=('other_session', Cache.capabilities, {}))
+                writer.start()
+                writers.append(writer)
+                writer.join(timeout=0.2)
+                writer_blocked.append(writer.is_alive())
+                for item in list(super().items()):
+                    yield item
+
+        original = cache.CACHE
+        cache.CACHE = InterleavingDict(original)
+        try:
+            cache.cleanup_cache()  # must not raise "dictionary changed size during iteration"
+            writers[0].join(timeout=5)
+            self.assertEqual(writer_blocked, [True])
+            self.assertIn('other_session', cache.CACHE)
+        finally:
+            cache.CACHE = original

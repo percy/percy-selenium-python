@@ -60,6 +60,13 @@ $ percy exec -- [python test command]
 - `name` (**required**) - The snapshot name; must be unique to each snapshot
 - `**kwargs` - [See per-snapshot configuration options](https://www.browserstack.com/docs/percy/take-percy-snapshots/overview#per-snapshot-configuration)
 
+### Cookies
+
+By default the SDK sends the browser's cookies with each snapshot so Percy can load pages and
+assets that need a logged-in session during asset discovery. To stop sending cookies, set
+`PERCY_DO_NOT_USE_CAPTURED_COOKIES=true`. Assets behind authentication may then fail to load
+and snapshots can render incorrectly; the SDK logs a warning once when this is enabled.
+
 ### Migrating Config
 
 If you have a previous Percy configuration file, migrate it to the newest version with the
