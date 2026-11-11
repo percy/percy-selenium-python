@@ -535,6 +535,8 @@ class TestResponsiveDebugDump(unittest.TestCase):
         result = local.capture_responsive_dom(
             self._driver(), {}, {}, percy_dom_script='PERCY_DOM')
         self.assertEqual(result, [])
+        # The partially written dump is removed
+        self.assertEqual(os.listdir(self.tmpdir), [])
 
 
 class TestCookieForwarding(unittest.TestCase):

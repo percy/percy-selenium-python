@@ -1031,8 +1031,13 @@ def _write_responsive_debug_dump(dom_snapshots):
             for snap in dom_snapshots
         ]
         fd, path = tempfile.mkstemp(prefix='percy-responsive-dom-', suffix='.json')
-        with os.fdopen(fd, "w", encoding="utf-8") as file_handle:
-            json.dump(redacted, file_handle, indent=4)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as file_handle:
+                json.dump(redacted, file_handle, indent=4)
+        except Exception:
+            # Don't leave a partially written dump behind
+            os.remove(path)
+            raise
         log(f"Wrote responsive snapshot debug dump to {path}", "debug")
     except Exception as e:  # pylint: disable=broad-except
         log(f"Could not write debug snapshot dump: {type(e).__name__}: {e}", "debug")
