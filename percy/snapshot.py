@@ -2,6 +2,7 @@
 import os
 import platform
 import json
+import tempfile
 from contextlib import contextmanager
 from functools import lru_cache
 from time import sleep
@@ -35,6 +36,9 @@ try:
     RESIZE_SETTLE_SECONDS = float(os.environ.get('PERCY_RESIZE_SETTLE_SECONDS') or 0.5)
 except (TypeError, ValueError):
     RESIZE_SETTLE_SECONDS = 0.5
+# Set to true to stop sending browser cookies to the CLI (read per snapshot)
+DO_NOT_USE_CAPTURED_COOKIES_ENV = 'PERCY_DO_NOT_USE_CAPTURED_COOKIES'
+_cookie_opt_out_warned = False
 # for logging
 LABEL = '[\u001b[35m' + ('percy:python' if PERCY_DEBUG else 'percy') + '\u001b[39m]'
 CDP_SUPPORT_SELENIUM = (str(SELENIUM_VERSION)[0].isdigit() and int(
@@ -51,6 +55,25 @@ def log(message, lvl = 'info'):
         # Only log if lvl is 'debug' and PERCY_DEBUG is True
         if lvl != 'debug' or PERCY_DEBUG:
             print(message)
+
+def get_cookies_for_snapshot(driver):
+    """Collect browser cookies so the CLI can load authenticated assets during
+    discovery. Honours the PERCY_DO_NOT_USE_CAPTURED_COOKIES opt-out and never
+    raises: a cookie read failure only means no cookies are forwarded."""
+    global _cookie_opt_out_warned # pylint: disable=global-statement
+    if _get_bool_env(DO_NOT_USE_CAPTURED_COOKIES_ENV):
+        if not _cookie_opt_out_warned:
+            _cookie_opt_out_warned = True
+            log('Not sending browser cookies to Percy because '
+                f'{DO_NOT_USE_CAPTURED_COOKIES_ENV} is set. Pages or assets that need a '
+                'logged-in session may fail to load during asset discovery, so snapshots '
+                'can render incorrectly.', 'warn')
+        return []
+    try:
+        return driver.get_cookies()
+    except Exception as e:  # pylint: disable=broad-except
+        log(f'Could not read browser cookies, continuing without them: {e}', 'debug')
+        return []
 
 # Check if Percy is enabled, caching the result so it is only checked once
 @lru_cache(maxsize=None)
@@ -991,17 +1014,33 @@ def capture_responsive_dom(driver, cookies, config, percy_dom_script=None, **kwa
         dom_snapshots.append(dom_snapshot)
     # Optional debug dump — gated to avoid polluting the user's CWD on every CI run.
     if PERCY_DEBUG:
-        try:
-            with open("output_file.json", "w", encoding="utf-8") as file_handle:
-                json.dump(dom_snapshots, file_handle, indent=4)
-        except Exception as e:  # pylint: disable=broad-except
-            log(f"Could not write debug snapshot dump: {type(e).__name__}: {e}", "debug")
+        _write_responsive_debug_dump(dom_snapshots)
     # Restore the original window size after capture. No snapshot follows, so
     # skip the resize-event poll (wait_for_resize=False) — it serves no purpose
     # here and is the call that hangs geckodriver in CI.
     change_window_dimension_and_wait(
         driver, current_width, current_height, resize_count + 1, wait_for_resize=False)
     return dom_snapshots
+
+def _write_responsive_debug_dump(dom_snapshots):
+    # Owner-only temp file with an unpredictable name; cookies are left out
+    # because they're not needed to debug the captured DOM.
+    try:
+        redacted = [
+            {k: v for k, v in snap.items() if k != 'cookies'} if isinstance(snap, dict) else snap
+            for snap in dom_snapshots
+        ]
+        fd, path = tempfile.mkstemp(prefix='percy-responsive-dom-', suffix='.json')
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as file_handle:
+                json.dump(redacted, file_handle, indent=4)
+        except Exception:
+            # Don't leave a partially written dump behind
+            os.remove(path)
+            raise
+        log(f"Wrote responsive snapshot debug dump to {path}", "debug")
+    except Exception as e:  # pylint: disable=broad-except
+        log(f"Could not write debug snapshot dump: {type(e).__name__}: {e}", "debug")
 
 def is_responsive_snapshot_capture(config, **kwargs):
     # Don't run resposive snapshot capture when defer uploads is enabled
@@ -1028,7 +1067,7 @@ def percy_snapshot(driver, name, **kwargs):
         # Expose closed shadow roots via CDP before serialization so PercyDOM
         # can find them through the WeakMap (Chromium-only; non-Chromium no-ops).
         expose_closed_shadow_roots(driver)
-        cookies = driver.get_cookies()
+        cookies = get_cookies_for_snapshot(driver)
 
         # Serialize and capture the DOM
         if is_responsive_snapshot_capture(data['config'], **kwargs):
