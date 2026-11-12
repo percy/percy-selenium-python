@@ -9,14 +9,15 @@ class TestCache(unittest.TestCase):
     def setUp(self) -> None:
         self.cache = Cache
         self.session_id = 'session_id_123'
-        self.command_executor_url = 'https://example-hub:4444/wd/hub'
+        self.other_property = 'other_property'
+        self.other_value = 'other_value'
         self.capabilities = {
             'browser': 'chrome',
             'platform': 'windows',
             'browserVersion': '115.0.1'
           }
 
-        self.cache.set_cache(self.session_id, Cache.command_executor_url, self.command_executor_url)
+        self.cache.set_cache(self.session_id, self.other_property, self.other_value)
         self.cache.set_cache(self.session_id, Cache.capabilities, self.capabilities)
 
     def test_set_cache(self):
@@ -29,8 +30,8 @@ class TestCache(unittest.TestCase):
         self.assertEqual(str(e.exception), 'Argument property should be string')
 
         self.assertIn(self.session_id, self.cache.CACHE)
-        self.assertEqual(self.cache.CACHE[self.session_id][Cache.command_executor_url],
-                         self.command_executor_url)
+        self.assertEqual(self.cache.CACHE[self.session_id][self.other_property],
+                         self.other_value)
         self.assertDictEqual(self.cache.CACHE[self.session_id][Cache.capabilities],
                              self.capabilities)
 
@@ -45,8 +46,8 @@ class TestCache(unittest.TestCase):
 
     @patch.object(Cache, 'cleanup_cache')
     def test_get_cache_success(self, mock_cleanup_cache):
-        url = self.cache.get_cache(self.session_id, Cache.command_executor_url)
-        self.assertEqual(url, self.command_executor_url)
+        value = self.cache.get_cache(self.session_id, self.other_property)
+        self.assertEqual(value, self.other_value)
         caps = self.cache.get_cache(self.session_id, Cache.capabilities)
         self.assertDictEqual(caps, self.capabilities)
         mock_cleanup_cache.assert_called()
