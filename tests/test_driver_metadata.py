@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch, Mock
 from selenium.webdriver.remote.webdriver import WebDriver
 
+from percy.cache import Cache
 from percy.driver_metadata import DriverMetaData
 
 class TestDriverMetadata(unittest.TestCase):
@@ -38,6 +39,21 @@ class TestDriverMetadata(unittest.TestCase):
     def test_command_executor_url(self):
         url = 'https://example-hub:4444/wd/hub'
         self.assertEqual(self.metadata.command_executor_url, url)
+
+    @patch('percy.cache.Cache.CACHE', {})
+    def test_command_executor_url_is_not_cached(self):
+        # The URL can embed Grid Basic-Auth credentials, so it must never be
+        # written to the process-wide session cache.
+        self.mock_webdriver.command_executor._url = 'https://user:secret@hub:4444/wd/hub' # pylint: disable=W0212
+        self.assertEqual(self.metadata.command_executor_url, 'https://user:secret@hub:4444/wd/hub')
+        self.assertNotIn('secret', repr(Cache.CACHE))
+        self.assertDictEqual(Cache.CACHE, {})
+
+    @patch('percy.cache.Cache.CACHE', {})
+    def test_command_executor_url_reads_live_driver_each_call(self):
+        self.assertEqual(self.metadata.command_executor_url, 'https://example-hub:4444/wd/hub')
+        self.mock_webdriver.command_executor._url = 'https://other-hub:4444/wd/hub' # pylint: disable=W0212
+        self.assertEqual(self.metadata.command_executor_url, 'https://other-hub:4444/wd/hub')
 
     @patch('percy.cache.Cache.CACHE', {})
     def test_command_executor_url_falls_back_to_remote_server_addr(self):

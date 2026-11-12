@@ -10,18 +10,13 @@ class DriverMetaData:
 
     @property
     def command_executor_url(self):
-        url = Cache.get_cache(self.session_id, Cache.command_executor_url)
-        if url is None:
-            try:
-                url = self.driver.command_executor._url  # pylint: disable=W0212
-            except (AttributeError, Exception):
-                url = (
-                    self.driver.command_executor.client_config.remote_server_addr
-                )  # pylint: disable=W0212
-
-            Cache.set_cache(self.session_id, Cache.command_executor_url, url)
-            return url
-        return url
+        # Read from the live driver on every call and never cache it: the URL
+        # can embed Grid Basic-Auth credentials, and the session cache is
+        # process-wide and keyed only by session_id.
+        try:
+            return self.driver.command_executor._url  # pylint: disable=W0212
+        except (AttributeError, Exception):
+            return self.driver.command_executor.client_config.remote_server_addr
 
     @property
     def capabilities(self):

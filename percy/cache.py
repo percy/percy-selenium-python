@@ -10,7 +10,6 @@ class Cache:
 
     # Caching Keys
     capabilities = 'capabilities'
-    command_executor_url = 'command_executor_url'
 
     @classmethod
     def check_types(cls, session_id, property):
